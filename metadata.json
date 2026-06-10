@@ -1,0 +1,6 @@
+{
+  "name": "Blued Lite Hook",
+  "description": "LSPosed module for Blued Lite with iOS/MIUI style UI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
