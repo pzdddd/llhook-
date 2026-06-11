@@ -1,6 +1,7 @@
 package com.example.hook
 
 import android.app.Activity
+import android.app.Application
 import android.os.Bundle
 import android.widget.Toast
 import de.robv.android.xposed.IXposedHookLoadPackage
@@ -10,31 +11,64 @@ import de.robv.android.xposed.XposedHelpers
 import de.robv.android.xposed.callbacks.XC_LoadPackage
 
 class MainHook : IXposedHookLoadPackage {
+
+    private var isToastShown = false
+
     override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
         val packageName = lpparam.packageName
-        if (packageName == "com.blued.international.lite" || packageName == "com.soft.blued.lite") {
-            XposedBridge.log("Blued Lite Hooking Initialized for: $packageName")
+        if (packageName == "com.blued.international.lite" || packageName == "com.soft.blued.lite" || packageName == "com.danlan.xiaolan") {
+            XposedBridge.log("Hooking Initialized for: $packageName")
             
-            // 劫持主界面的 onCreate，将我们的设置 UI 注入到它的里面，或者添加一个悬浮窗
-            // 真实使用时，可以在此劫持 Activity 并弹出 Dialog 或者添加悬浮窗 (FloatView)。
+            // 为了应对加壳应用，我们劫持 Instrumentation 的 callApplicationOnCreate，
+            // 此时真正的 Dex 已经解压并加载到 ClassLoader
+            try {
+                XposedHelpers.findAndHookMethod(
+                    "android.app.Instrumentation",
+                    lpparam.classLoader,
+                    "callApplicationOnCreate",
+                    Application::class.java,
+                    object : XC_MethodHook() {
+                        override fun afterHookedMethod(param: MethodHookParam) {
+                            val app = param.args[0] as Application
+                            val realClassLoader = app.classLoader
+                            
+                            XposedBridge.log("Application created. Real ClassLoader obtained for: $packageName")
+                            
+                            // 在这里继续 Hook 真实的业务代码
+                            hookRealActivity(realClassLoader)
+                        }
+                    }
+                )
+            } catch (e: Throwable) {
+                XposedBridge.log(e)
+            }
+        }
+    }
+    
+    private fun hookRealActivity(classLoader: ClassLoader) {
+        try {
             XposedHelpers.findAndHookMethod(
-                "android.app.Activity", // 这里替换为 Blued 实际的 MainActivity 类名
-                lpparam.classLoader,
+                "android.app.Activity",
+                classLoader,
                 "onCreate",
                 Bundle::class.java,
                 object : XC_MethodHook() {
                     override fun afterHookedMethod(param: MethodHookParam) {
                         val activity = param.thisObject as Activity
                         try {
-                            // 在这里将我们的 Compose Settings 或者普通的 View 注入进去
-                            // 或者触发悬浮按钮
-                            XposedBridge.log("Injected Float UI into: ${activity.localClassName}")
+                            if (!isToastShown) {
+                                isToastShown = true
+                                Toast.makeText(activity, "加载成功", Toast.LENGTH_SHORT).show()
+                                XposedBridge.log("Toast shown and injected Float UI into: ${activity.localClassName}")
+                            }
                         } catch (e: Throwable) {
                             XposedBridge.log(e)
                         }
                     }
                 }
             )
+        } catch (e: Throwable) {
+            XposedBridge.log(e)
         }
     }
 }

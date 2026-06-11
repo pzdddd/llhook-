@@ -3,5 +3,6 @@
     <string-array name="xposed_scopes">
         <item>com.blued.international.lite</item>
         <item>com.soft.blued.lite</item>
+        <item>com.danlan.xiaolan</item>
     </string-array>
 </resources>
