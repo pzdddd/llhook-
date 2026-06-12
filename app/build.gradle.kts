@@ -5,12 +5,12 @@ plugins {
 
 android {
   namespace = "com.example"
-  compileSdk = 33
+  compileSdk = 31
 
   defaultConfig {
     applicationId = "com.aistudio.bluedhook.mziqbx"
-    minSdk = 24
-    targetSdk = 33
+    minSdk = 26
+    targetSdk = 31
     versionCode = 1
     versionName = "1.0"
 
