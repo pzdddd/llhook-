@@ -20,11 +20,21 @@
             android:value="极速小助手 - 专注于给用户更纯净的体验" />
         <meta-data
             android:name="xposedminversion"
-            android:value="93" />
+            android:value="102" />
         <meta-data
             android:name="xposedscope"
             android:resource="@array/xposed_scopes" />
 
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.MyApplication">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
     </application>
 
 </manifest>

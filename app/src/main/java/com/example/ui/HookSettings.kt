@@ -21,7 +21,7 @@ import androidx.compose.ui.unit.sp
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen() {
-    val isDark = androidx.compose.foundation.isSystemInDarkTheme()
+    val isDark = false // Force light mode as requested
     
     // Liquid Glass background colors (clean and pristine iOS/MIUI style)
     val bgColors = if (isDark) {
@@ -69,7 +69,7 @@ fun MainScreen() {
                 
                 // Header Description
                 Text(
-                    "为 Blued 极速版 提供清爽、沉浸的使用体验。\n此界面通常通过注入方式在软件内部显示，\n当前仅为开发环境预览。",
+                    "为 Blued 极速版 提供清爽、沉浸的使用体验。\n当前可通过桌面图标或软件内悬浮球进入此界面进行设置。",
                     color = subTextColor,
                     fontSize = 14.sp,
                     modifier = Modifier.padding(horizontal = 8.dp)
@@ -113,7 +113,23 @@ fun MainScreen() {
                     )
                 }
 
-                // Section 3: 水印与杂项
+                // Section 3: 定位与追踪
+                SettingsSection(title = "定位与追踪", glassColor = glassColor, glassBorder = glassBorder, titleColor = subTextColor) {
+                    var virtualLocation by remember { mutableStateOf(false) }
+                    var locationTracking by remember { mutableStateOf(false) }
+
+                    SettingsSwitchItem(
+                        title = "虚拟定位", subtitle = "修改设备的GPS位置信息",
+                        checked = virtualLocation, onCheckedChange = { virtualLocation = it }, textColor = textColor, subTextColor = subTextColor
+                    )
+                    SettingsDivider(glassBorder)
+                    SettingsSwitchItem(
+                        title = "位置追踪", subtitle = "记录并追踪特定用户的位置",
+                        checked = locationTracking, onCheckedChange = { locationTracking = it }, textColor = textColor, subTextColor = subTextColor
+                    )
+                }
+
+                // Section 4: 水印与杂项
                 SettingsSection(title = "其他设置", glassColor = glassColor, glassBorder = glassBorder, titleColor = subTextColor) {
                     var removeWatermark by remember { mutableStateOf(true) }
                     var crackVip by remember { mutableStateOf(false) }

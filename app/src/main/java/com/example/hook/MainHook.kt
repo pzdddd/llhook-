@@ -10,75 +10,84 @@ import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.findViewTreeSavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
-import de.robv.android.xposed.IXposedHookLoadPackage
-import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XposedBridge
-import de.robv.android.xposed.XposedHelpers
-import de.robv.android.xposed.callbacks.XC_LoadPackage
+import io.github.libxposed.api.XposedInterface
+import io.github.libxposed.api.XposedModule
+import io.github.libxposed.api.XposedModuleInterface
 
-class MainHook : IXposedHookLoadPackage {
+class MainHook : XposedModule() {
 
     private var isToastShown = false
+    
+    private fun logMsg(msg: String) {
+        // Priority 4 = Log.INFO
+        log(4, "MainHook", msg)
+    }
 
-    override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
-        val packageName = lpparam.packageName
+    private fun logError(msg: String, tr: Throwable? = null) {
+        // Priority 6 = Log.ERROR
+        log(6, "MainHook", msg, tr)
+    }
+
+    override fun onPackageLoaded(param: XposedModuleInterface.PackageLoadedParam) {
+        super.onPackageLoaded(param)
+        val packageName = param.packageName
         if (packageName == "com.blued.international.lite" || packageName == "com.soft.blued.lite" || packageName == "com.danlan.xiaolan") {
-            XposedBridge.log("Hooking Initialized for: $packageName")
+            logMsg("Hooking Initialized for: $packageName")
             
-            // 为了应对加壳应用，我们劫持 Instrumentation 的 callApplicationOnCreate，
-            // 此时真正的 Dex 已经解压并加载到 ClassLoader
             try {
-                XposedHelpers.findAndHookMethod(
-                    "android.app.Instrumentation",
-                    lpparam.classLoader,
-                    "callApplicationOnCreate",
-                    Application::class.java,
-                    object : XC_MethodHook() {
-                        override fun afterHookedMethod(param: MethodHookParam) {
-                            val app = param.args[0] as Application
-                            val realClassLoader = app.classLoader
-                            
-                            XposedBridge.log("Application created. Real ClassLoader obtained for: $packageName")
-                            
-                            // 在这里继续 Hook 真实的业务代码
-                            hookRealActivity(realClassLoader)
-                        }
+                val instrumentationClass = Class.forName("android.app.Instrumentation", false, param.defaultClassLoader)
+                val method = instrumentationClass.getDeclaredMethod("callApplicationOnCreate", Application::class.java)
+                
+                hook(method).intercept(object : XposedInterface.Hooker {
+                    override fun intercept(chain: XposedInterface.Chain): Any? {
+                        val result = chain.proceed()
+                        
+                        val app = chain.args[0] as Application
+                        val realClassLoader = app.classLoader
+                        
+                        logMsg("Application created. Real ClassLoader obtained for: $packageName")
+                        
+                        hookRealActivity(realClassLoader)
+                        
+                        return result
                     }
-                )
+                })
             } catch (e: Throwable) {
-                XposedBridge.log(e)
+                logError(e.stackTraceToString(), e)
             }
         }
     }
     
     private fun hookRealActivity(classLoader: ClassLoader) {
         try {
-            XposedHelpers.findAndHookMethod(
-                "android.app.Activity",
-                classLoader,
-                "onResume",
-                object : XC_MethodHook() {
-                    override fun afterHookedMethod(param: MethodHookParam) {
-                        val activity = param.thisObject as Activity
-                        try {
-                            if (!isToastShown) {
-                                isToastShown = true
-                                Toast.makeText(activity, "加载成功", Toast.LENGTH_SHORT).show()
-                                XposedBridge.log("Toast shown")
-                            }
-                            
-                            val className = activity.javaClass.name
-                            if (className == "com.soft.blued.ui.home.HomeActivity" || className.endsWith("HomeActivity")) {
-                                injectFloatButton(activity)
-                            }
-                        } catch (e: Throwable) {
-                            XposedBridge.log(e)
+            val activityClass = Class.forName("android.app.Activity", false, classLoader)
+            val method = activityClass.getDeclaredMethod("onResume")
+            
+            hook(method).intercept(object : XposedInterface.Hooker {
+                override fun intercept(chain: XposedInterface.Chain): Any? {
+                    val result = chain.proceed()
+                    
+                    val activity = chain.thisObject as Activity
+                    try {
+                        if (!isToastShown) {
+                            isToastShown = true
+                            Toast.makeText(activity, "加载成功", Toast.LENGTH_SHORT).show()
+                            logMsg("Toast shown")
                         }
+                        
+                        val className = activity.javaClass.name
+                        if (className == "com.soft.blued.ui.home.HomeActivity" || className.endsWith("HomeActivity")) {
+                            injectFloatButton(activity)
+                        }
+                    } catch (e: Throwable) {
+                        logError(e.stackTraceToString(), e)
                     }
+                    
+                    return result
                 }
-            )
+            })
         } catch (e: Throwable) {
-            XposedBridge.log(e)
+            logError(e.stackTraceToString(), e)
         }
     }
 
@@ -160,7 +169,7 @@ class MainHook : IXposedHookLoadPackage {
         }
         
         rootContainer.addView(floatButton)
-        XposedBridge.log("Injected Float Button into: ${activity.localClassName}")
+        logMsg("Injected Float Button into: ${activity.localClassName}")
     }
 
     private fun showSettingsDialog(activity: Activity) {
@@ -221,7 +230,7 @@ class MainHook : IXposedHookLoadPackage {
             }
             dialog.show()
         } catch (e: Throwable) {
-            XposedBridge.log("Failed to show dialog: ${e.message}")
+            logError("Failed to show dialog: ${e.message}", e)
             Toast.makeText(activity, "无法加载设置界面", Toast.LENGTH_SHORT).show()
         }
     }
