@@ -17,6 +17,7 @@ import io.github.libxposed.api.XposedModuleInterface
 class MainHook : XposedModule() {
 
     private var isToastShown = false
+    private var prefs: android.content.SharedPreferences? = null
     
     private fun logMsg(msg: String) {
         // Priority 4 = Log.INFO
@@ -45,9 +46,12 @@ class MainHook : XposedModule() {
                         val app = chain.args[0] as Application
                         val realClassLoader = app.classLoader
                         
+                        // Initialize prefs when Application is created
+                        prefs = app.getSharedPreferences("blued_hook_prefs", android.content.Context.MODE_PRIVATE)
+                        
                         logMsg("Application created. Real ClassLoader obtained for: $packageName")
                         
-                        hookRealActivity(realClassLoader)
+                        hookRealActivity(realClassLoader, param)
                         
                         return result
                     }
@@ -58,7 +62,8 @@ class MainHook : XposedModule() {
         }
     }
     
-    private fun hookRealActivity(classLoader: ClassLoader) {
+    private fun hookRealActivity(classLoader: ClassLoader, param: XposedModuleInterface.PackageLoadedParam) {
+        hookLocationManager(classLoader, param)
         try {
             val activityClass = Class.forName("android.app.Activity", false, classLoader)
             val method = activityClass.getDeclaredMethod("onResume")
@@ -88,6 +93,47 @@ class MainHook : XposedModule() {
             })
         } catch (e: Throwable) {
             logError(e.stackTraceToString(), e)
+        }
+    }
+
+    private fun hookLocationManager(classLoader: ClassLoader, param: XposedModuleInterface.PackageLoadedParam) {
+        try {
+            val locationManagerClass = Class.forName("android.location.LocationManager", false, classLoader)
+            val getLastKnownLocationMethod = locationManagerClass.getDeclaredMethod("getLastKnownLocation", String::class.java)
+            hook(getLastKnownLocationMethod).intercept(object : XposedInterface.Hooker {
+                override fun intercept(chain: XposedInterface.Chain): Any? {
+                    logMsg("Intercepted getLastKnownLocation")
+                    val result = chain.proceed()
+                    
+                    try {
+                        val p = this@MainHook.prefs
+                        if (p != null) {
+                            val virtualLocation = p.getBoolean("virtualLocation", false)
+                            if (virtualLocation) {
+                                val lat = p.getFloat("loc_lat", 39.9042f).toDouble()
+                                val lng = p.getFloat("loc_lng", 116.4074f).toDouble()
+                                
+                                val provider = chain.args[0] as? String ?: android.location.LocationManager.GPS_PROVIDER
+                                val location = android.location.Location(provider).apply {
+                                    latitude = lat
+                                    longitude = lng
+                                    accuracy = 10f
+                                    time = System.currentTimeMillis()
+                                    elapsedRealtimeNanos = android.os.SystemClock.elapsedRealtimeNanos()
+                                }
+                                logMsg("Virtual location applied: $lat, $lng")
+                                return location
+                            }
+                        }
+                    } catch (e: Throwable) {
+                         logError("Failed to apply virtual location: ${e.message}", e)
+                    }
+
+                    return result
+                }
+            })
+        } catch (e: Throwable) {
+            logError("Failed to hook LocationManager: ${e.message}", e)
         }
     }
 
@@ -186,7 +232,10 @@ class MainHook : XposedModule() {
                     android.view.ViewGroup.LayoutParams.MATCH_PARENT
                 )
                 setContent {
-                    com.example.ui.MainScreen()
+                    // Get SharedPreferences from the target context
+                    val context = activity.applicationContext
+                    val prefs = context.getSharedPreferences("blued_hook_prefs", android.content.Context.MODE_PRIVATE)
+                    com.example.ui.MainScreen(prefs)
                 }
             }
 

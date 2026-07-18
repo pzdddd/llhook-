@@ -1,0 +1,299 @@
+--- app/src/main/java/com/example/ui/HookSettings.kt
++++ app/src/main/java/com/example/ui/HookSettings.kt
+@@ -37,2 +37,8 @@
+ import androidx.compose.ui.unit.sp
+ import kotlinx.coroutines.delay
+ import androidx.compose.ui.draw.clip
++import android.webkit.WebView
++import android.webkit.WebViewClient
++import android.webkit.WebChromeClient
++import android.annotation.SuppressLint
++import android.webkit.JavascriptInterface
++import androidx.compose.ui.viewinterop.AndroidView
+ 
+@@ -58,2 +64,8 @@
+ }
+ 
++enum class MapProvider(val displayName: String) {
++    AMAP("高德地图"),
++    TENCENT("腾讯地图"),
++    BAIDU("百度地图")
++}
++
+@@ -231,84 +243,158 @@
+ 
++@SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
+ @OptIn(ExperimentalMaterial3Api::class)
+ @Composable
+ fun MapPickerContent(prefs: SharedPreferences, onBack: () -> Unit) {
+-    val lat = prefs.getFloat("loc_lat", 39.9042f)
+-    val lng = prefs.getFloat("loc_lng", 116.4074f)
+-    
+-    // Simulate setting values directly
+-    var simulatedLat by remember { mutableStateOf(lat.toString()) }
+-    var simulatedLng by remember { mutableStateOf(lng.toString()) }
++    var lat by remember { mutableStateOf(prefs.getFloat("loc_lat", 39.9042f)) }
++    var lng by remember { mutableStateOf(prefs.getFloat("loc_lng", 116.4074f)) }
++    var providerName by remember { mutableStateOf(prefs.getString("map_provider", MapProvider.AMAP.name) ?: MapProvider.AMAP.name) }
++    var apiKey by remember { mutableStateOf(prefs.getString("api_key_$providerName", "") ?: "") }
++    
++    val provider = MapProvider.valueOf(providerName)
++    
++    var showSettings by remember { mutableStateOf(false) }
+     
+     Box(modifier = Modifier.fillMaxSize().background(Color(0xFFF1F5F9))) {
+         Scaffold(
+             topBar = {
+                 TopAppBar(
+                     title = { Text("地图选点") },
+                     navigationIcon = {
+                         IconButton(onClick = onBack) {
+                             Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+                         }
+                     },
++                    actions = {
++                        IconButton(onClick = { showSettings = !showSettings }) {
++                            Icon(Icons.Default.Settings, contentDescription = "Map Settings")
++                        }
++                    },
+                     colors = TopAppBarDefaults.topAppBarColors(
+                         containerColor = Color.Transparent
+                     )
+                 )
+             },
+             containerColor = Color.Transparent
+         ) { padding ->
+             Column(
+                 modifier = Modifier
+                     .fillMaxSize()
+                     .padding(padding)
+-                    .padding(16.dp),
+-                verticalArrangement = Arrangement.spacedBy(16.dp)
+             ) {
+-                Text("输入虚拟经纬度:")
+-                OutlinedTextField(
+-                    value = simulatedLat,
+-                    onValueChange = { simulatedLat = it },
+-                    label = { Text("纬度 (Latitude)") },
+-                    modifier = Modifier.fillMaxWidth()
+-                )
+-                OutlinedTextField(
+-                    value = simulatedLng,
+-                    onValueChange = { simulatedLng = it },
+-                    label = { Text("经度 (Longitude)") },
+-                    modifier = Modifier.fillMaxWidth()
+-                )
+-                Button(
+-                    onClick = {
+-                        val parsedLat = simulatedLat.toFloatOrNull() ?: 39.9042f
+-                        val parsedLng = simulatedLng.toFloatOrNull() ?: 116.4074f
+-                        prefs.edit()
+-                            .putFloat("loc_lat", parsedLat)
+-                            .putFloat("loc_lng", parsedLng)
+-                            .apply()
+-                        onBack()
+-                    },
+-                    modifier = Modifier.fillMaxWidth()
+-                ) {
+-                    Text("保存")
+-                }
+-                
+-                // Placeholder map UI
+-                Box(
+-                    modifier = Modifier
+-                        .fillMaxWidth()
+-                        .weight(1f)
+-                        .clip(RoundedCornerShape(16.dp))
+-                        .background(Color.LightGray),
+-                    contentAlignment = Alignment.Center
+-                ) {
+-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+-                        Icon(Icons.Default.Map, contentDescription = null, modifier = Modifier.size(64.dp), tint = Color.DarkGray)
+-                        Spacer(modifier = Modifier.height(8.dp))
+-                        Text("地图组件加载中...", color = Color.DarkGray)
+-                        Text("(模拟地图环境，可通过上方输入框直接设置)", color = Color.Gray, fontSize = 12.sp)
++                if (showSettings) {
++                    Column(
++                        modifier = Modifier
++                            .fillMaxWidth()
++                            .padding(16.dp)
++                            .background(Color.White, RoundedCornerShape(12.dp))
++                            .padding(16.dp),
++                        verticalArrangement = Arrangement.spacedBy(8.dp)
++                    ) {
++                        Text("地图提供商", fontWeight = FontWeight.Bold)
++                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
++                            MapProvider.values().forEach { p ->
++                                FilterChip(
++                                    selected = p == provider,
++                                    onClick = {
++                                        providerName = p.name
++                                        prefs.edit().putString("map_provider", p.name).apply()
++                                        apiKey = prefs.getString("api_key_${p.name}", "") ?: ""
++                                    },
++                                    label = { Text(p.displayName) }
++                                )
++                            }
++                        }
++                        
++                        OutlinedTextField(
++                            value = apiKey,
++                            onValueChange = { 
++                                apiKey = it
++                                prefs.edit().putString("api_key_$providerName", it).apply()
++                            },
++                            label = { Text("API Key") },
++                            modifier = Modifier.fillMaxWidth()
++                        )
++                        
++                        Button(
++                            onClick = { showSettings = false },
++                            modifier = Modifier.fillMaxWidth()
++                        ) {
++                            Text("应用")
++                        }
++                    }
++                } else {
++                    if (apiKey.isEmpty()) {
++                        Box(
++                            modifier = Modifier.fillMaxSize(),
++                            contentAlignment = Alignment.Center
++                        ) {
++                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
++                                Text("请先配置 ${provider.displayName} 的 API Key", color = Color.Gray)
++                                Spacer(modifier = Modifier.height(16.dp))
++                                Button(onClick = { showSettings = true }) {
++                                    Text("去设置")
++                                }
++                            }
++                        }
++                    } else {
++                        val htmlData = getMapHtml(provider, apiKey, lat, lng)
++                        
++                        Box(modifier = Modifier.fillMaxSize()) {
++                            AndroidView(
++                                factory = { context ->
++                                    WebView(context).apply {
++                                        settings.javaScriptEnabled = true
++                                        settings.domStorageEnabled = true
++                                        
++                                        webViewClient = WebViewClient()
++                                        webChromeClient = WebChromeClient()
++                                        
++                                        addJavascriptInterface(object : Any() {
++                                            @JavascriptInterface
++                                            fun onLocationPicked(newLat: Double, newLng: Double) {
++                                                lat = newLat.toFloat()
++                                                lng = newLng.toFloat()
++                                                prefs.edit()
++                                                    .putFloat("loc_lat", lat)
++                                                    .putFloat("loc_lng", lng)
++                                                    .apply()
++                                            }
++                                        }, "Android")
++                                        
++                                        loadDataWithBaseURL("https://localhost", htmlData, "text/html", "UTF-8", null)
++                                    }
++                                },
++                                update = { view ->
++                                    // Not dynamically updating html on every recomposition to avoid map reload
++                                },
++                                modifier = Modifier.fillMaxSize()
++                            )
++                            
++                            Box(
++                                modifier = Modifier
++                                    .align(Alignment.BottomCenter)
++                                    .padding(16.dp)
++                                    .background(Color.White.copy(alpha = 0.9f), RoundedCornerShape(12.dp))
++                                    .padding(16.dp)
++                            ) {
++                                Text("当前选中坐标: $lat, $lng", fontWeight = FontWeight.Medium)
++                            }
++                        }
+                     }
+                 }
+             }
+         }
+     }
+ }
++
++fun getMapHtml(provider: MapProvider, apiKey: String, lat: Float, lng: Float): String {
++    return when (provider) {
++        MapProvider.AMAP -> """
++            <!DOCTYPE html>
++            <html>
++            <head>
++                <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
++                <script type="text/javascript">
++                    window._AMapSecurityConfig = { securityJsCode: '' } 
++                </script>
++                <script type="text/javascript" src="https://webapi.amap.com/maps?v=2.0&key=$apiKey"></script>
++                <style> body { margin: 0; padding: 0; } #map { width: 100vw; height: 100vh; } </style>
++            </head>
++            <body>
++                <div id="map"></div>
++                <script>
++                    var map = new AMap.Map('map', { center: [$lng, $lat], zoom: 15 });
++                    var marker = new AMap.Marker({ position: [$lng, $lat] });
++                    map.add(marker);
++                    map.on('click', function(e) {
++                        marker.setPosition(e.lnglat);
++                        Android.onLocationPicked(e.lnglat.getLat(), e.lnglat.getLng());
++                    });
++                </script>
++            </body>
++            </html>
++        """.trimIndent()
++        MapProvider.TENCENT -> """
++            <!DOCTYPE html>
++            <html>
++            <head>
++                <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
++                <script charset="utf-8" src="https://map.qq.com/api/gljs?v=1.exp&key=$apiKey"></script>
++                <style> body { margin: 0; padding: 0; } #map { width: 100vw; height: 100vh; } </style>
++            </head>
++            <body>
++                <div id="map"></div>
++                <script>
++                    var center = new TMap.LatLng($lat, $lng);
++                    var map = new TMap.Map(document.getElementById('map'), { center: center, zoom: 15 });
++                    var marker = new TMap.MultiMarker({
++                        map: map,
++                        geometries: [{ id: '1', styleId: 'marker', position: center }]
++                    });
++                    map.on('click', function(e) {
++                        marker.updateGeometries([{ id: '1', styleId: 'marker', position: e.latLng }]);
++                        Android.onLocationPicked(e.latLng.lat, e.latLng.lng);
++                    });
++                </script>
++            </body>
++            </html>
++        """.trimIndent()
++        MapProvider.BAIDU -> """
++            <!DOCTYPE html>
++            <html>
++            <head>
++                <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
++                <script type="text/javascript" src="https://api.map.baidu.com/api?v=3.0&ak=$apiKey"></script>
++                <style> body { margin: 0; padding: 0; } #map { width: 100vw; height: 100vh; } </style>
++            </head>
++            <body>
++                <div id="map"></div>
++                <script>
++                    var map = new BMap.Map("map");
++                    var point = new BMap.Point($lng, $lat);
++                    map.centerAndZoom(point, 15);
++                    var marker = new BMap.Marker(point);
++                    map.addOverlay(marker);
++                    map.addEventListener("click", function(e) {
++                        var pt = e.point;
++                        marker.setPosition(pt);
++                        Android.onLocationPicked(pt.lat, pt.lng);
++                    });
++                </script>
++            </body>
++            </html>
++        """.trimIndent()
++    }
++}

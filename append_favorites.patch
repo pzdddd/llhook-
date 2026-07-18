@@ -1,0 +1,39 @@
+--- app/src/main/java/com/example/ui/HookSettings.kt
++++ app/src/main/java/com/example/ui/HookSettings.kt
+@@ -43,2 +43,4 @@
+ import androidx.compose.ui.viewinterop.AndroidView
++import androidx.compose.material.icons.filled.Favorite
++import androidx.compose.material.icons.filled.FavoriteBorder
++import androidx.compose.material.icons.filled.List
+ 
+@@ -66,2 +68,26 @@
+ 
++data class FavoriteLocation(val lat: Float, val lng: Float, val name: String)
++
++fun getFavorites(prefs: SharedPreferences): List<FavoriteLocation> {
++    val str = prefs.getString("favorites", "") ?: ""
++    if (str.isEmpty()) return emptyList()
++    return str.split("|").mapNotNull {
++        val parts = it.split(",")
++        if (parts.size >= 3) {
++            FavoriteLocation(parts[0].toFloatOrNull() ?: 0f, parts[1].toFloatOrNull() ?: 0f, parts[2])
++        } else null
++    }
++}
++
++fun saveFavorites(prefs: SharedPreferences, list: List<FavoriteLocation>) {
++    val str = list.joinToString("|") { "${"$"}{it.lat},${"$"}{it.lng},${"$"}{it.name}" }
++    prefs.edit().putString("favorites", str).apply()
++}
++
++fun toggleFavorite(prefs: SharedPreferences, lat: Float, lng: Float, name: String) {
++    val current = getFavorites(prefs).toMutableList()
++    if (current.any { it.lat == lat && it.lng == lng }) {
++        current.removeAll { it.lat == lat && it.lng == lng }
++    } else {
++        current.add(FavoriteLocation(lat, lng, name))
++    }
++    saveFavorites(prefs, current)
++}
++
+ @Composable

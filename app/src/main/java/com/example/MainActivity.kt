@@ -13,7 +13,8 @@ class MainActivity : ComponentActivity() {
     enableEdgeToEdge()
     setContent {
       MyApplicationTheme {
-        MainScreen()
+        val prefs = getSharedPreferences("blued_hook_prefs", android.content.Context.MODE_PRIVATE)
+        MainScreen(prefs)
       }
     }
   }
