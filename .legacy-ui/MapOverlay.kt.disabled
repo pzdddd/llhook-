@@ -1,0 +1,823 @@
+package bxxd.hook
+
+import android.app.Activity
+import android.app.AlertDialog
+import android.content.Context
+import android.content.Intent
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
+import android.os.Build
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.text.Editable
+import android.text.TextWatcher
+import android.util.TypedValue
+import android.view.Gravity
+import android.view.KeyEvent
+import android.view.View
+import android.view.ViewGroup
+import android.widget.*
+import de.robv.android.xposed.XposedHelpers
+import org.json.JSONArray
+import kotlin.math.abs
+
+object MapOverlay {
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    fun showMap(activity: Activity, radarLat: Double = 0.0, radarLng: Double = 0.0) {
+        val classLoader = FloatingUI.hostClassLoader ?: return
+        val isRadarMode = radarLat != 0.0 && radarLng != 0.0
+        val rootView = activity.findViewById<ViewGroup>(android.R.id.content) ?: return
+
+        rootView.findViewWithTag<View>("llhook_map_overlay")?.let { rootView.removeView(it) }
+
+        var mapView: View? = null
+        var mapInstance: Any? = null
+        var pkgPrefix = ""
+        // 百度 LatLng 在 com.baidu.mapapi.model.LatLng, 与腾讯/高德的 pkgPrefix.model.LatLng 不同;
+        // 此变量统一记录各引擎的 LatLng 全限定名, 避免拼接出错。
+        var latLngClassName = ""
+        // 百度添加点用 addOverlay(MarkerOptions), 且 MarkerOptions 在 com.baidu.mapapi.map.MarkerOptions;
+        // 腾讯/高德用 addMarker(pkgPrefix.model.MarkerOptions)。此变量记录 MarkerOptions 全限定名。
+        var markerOptionsClassName = ""
+        var engineType = 0 
+        var viewClassName = ""
+        
+        var blindLat = 0.0
+        var blindLng = 0.0
+        var isAutoFilling = false
+
+        val closeMapOverlay = {
+            try {
+                val container = rootView.findViewWithTag<View>("llhook_map_overlay")
+                if (container != null) {
+                    if (mapView != null) {
+                        try { XposedHelpers.callMethod(mapView, "onPause") } catch(e:Throwable){}
+                        try { XposedHelpers.callMethod(mapView, "onDestroy") } catch(e:Throwable){}
+                    }
+                    rootView.removeView(container)
+                }
+            } catch(e:Throwable){}
+        }
+
+        val mapContainer = object : FrameLayout(activity) {
+            override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+                if (event.keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
+                    closeMapOverlay() 
+                    return true 
+                }
+                return super.dispatchKeyEvent(event)
+            }
+        }.apply { 
+            setBackgroundColor(Color.parseColor("#222222"))
+            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+            isClickable = true 
+            isFocusable = true
+            isFocusableInTouchMode = true 
+            tag = "llhook_map_overlay"
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) translationZ = 999f 
+        } 
+
+        // 🚀 读取内核偏好设置
+        val prefs = activity.getSharedPreferences("llhook_blued_local_v2", Context.MODE_PRIVATE)
+        val enginePref = prefs.getInt("map_engine_pref", 0) // 0=自动, 1=强制腾讯, 2=强制高德
+
+        try {
+            var hasTencent = false
+            var hasAmap = false
+            var hasBaidu = false
+            
+            try { classLoader.loadClass("com.tencent.tencentmap.mapsdk.maps.TextureMapView"); hasTencent = true } catch (e: Throwable) {
+                try { classLoader.loadClass("com.tencent.tencentmap.mapsdk.maps.MapView"); hasTencent = true } catch (e2: Throwable) {}
+            }
+            try { classLoader.loadClass("com.amap.api.maps.TextureMapView"); hasAmap = true } catch (e: Throwable) {
+                try { classLoader.loadClass("com.amap.api.maps.MapView"); hasAmap = true } catch (e2: Throwable) {}
+            }
+            // 百度地图 SDK: TextureMapView / MapView (类名与腾讯/高德相同, 包名不同)
+            try { classLoader.loadClass("com.baidu.mapapi.map.TextureMapView"); hasBaidu = true } catch (e: Throwable) {
+                try { classLoader.loadClass("com.baidu.mapapi.map.MapView"); hasBaidu = true } catch (e2: Throwable) {}
+            }
+
+            // 根据用户保存的选择或自动检测加载内核
+            // enginePref: 0=自动, 1=强制腾讯, 2=强制高德, 3=强制百度
+            if (enginePref == 1 && hasTencent) {
+                engineType = 1
+                pkgPrefix = "com.tencent.tencentmap.mapsdk.maps"
+            } else if (enginePref == 2 && hasAmap) {
+                engineType = 2
+                pkgPrefix = "com.amap.api.maps"
+            } else if (enginePref == 3 && hasBaidu) {
+                engineType = 3
+                pkgPrefix = "com.baidu.mapapi.map"
+            } else {
+                // 自动选择逻辑：优先稳定版腾讯 → 高德 → 百度
+                if (hasTencent) {
+                    engineType = 1
+                    pkgPrefix = "com.tencent.tencentmap.mapsdk.maps"
+                } else if (hasAmap) {
+                    engineType = 2
+                    pkgPrefix = "com.amap.api.maps"
+                } else if (hasBaidu) {
+                    engineType = 3
+                    pkgPrefix = "com.baidu.mapapi.map"
+                }
+            }
+
+            if (engineType == 1) {
+                try {
+                    val initializerClass = classLoader.loadClass("$pkgPrefix.TencentMapInitializer")
+                    XposedHelpers.callStaticMethod(initializerClass, "setAgreePrivacy", true)
+                } catch (e: Throwable) {}
+                viewClassName = try { classLoader.loadClass("$pkgPrefix.TextureMapView"); "TextureMapView" } catch (e:Throwable) { "MapView" }
+                latLngClassName = "$pkgPrefix.model.LatLng"
+                markerOptionsClassName = "$pkgPrefix.model.MarkerOptions"
+            } else if (engineType == 2) {
+                try {
+                    val initializerClass = classLoader.loadClass("$pkgPrefix.MapsInitializer")
+                    XposedHelpers.callStaticMethod(initializerClass, "updatePrivacyShow", activity, true, true)
+                    XposedHelpers.callStaticMethod(initializerClass, "updatePrivacyAgree", activity, true)
+                } catch (e: Throwable) {}
+                viewClassName = try { classLoader.loadClass("$pkgPrefix.TextureMapView"); "TextureMapView" } catch (e:Throwable) { "MapView" }
+                latLngClassName = "$pkgPrefix.model.LatLng"
+                markerOptionsClassName = "$pkgPrefix.model.MarkerOptions"
+            } else if (engineType == 3) {
+                // 百度地图隐私合规: SDKInitializer.setAgreePrivacy(Context, boolean)
+                try {
+                    val sdkInitClass = classLoader.loadClass("com.baidu.mapapi.SDKInitializer")
+                    XposedHelpers.callStaticMethod(sdkInitClass, "setAgreePrivacy", activity, true)
+                } catch (e: Throwable) {}
+                viewClassName = try { classLoader.loadClass("$pkgPrefix.TextureMapView"); "TextureMapView" } catch (e:Throwable) { "MapView" }
+                // 百度: LatLng 在 model 包, MarkerOptions 在 map 包 (pkgPrefix)
+                latLngClassName = "com.baidu.mapapi.model.LatLng"
+                markerOptionsClassName = "$pkgPrefix.MarkerOptions"
+            }
+
+            if (engineType > 0) {
+                val mapViewClass = classLoader.loadClass("$pkgPrefix.$viewClassName")
+                mapView = XposedHelpers.newInstance(mapViewClass, activity) as View
+                
+                try { 
+                    val savedInstanceState = Bundle()
+                    XposedHelpers.callMethod(mapView, "onCreate", savedInstanceState)
+                } catch(e: Throwable) {}
+                try { XposedHelpers.callMethod(mapView, "onResume") } catch(e: Throwable) {}
+                
+                mapContainer.addView(mapView, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+                mapInstance = XposedHelpers.callMethod(mapView, "getMap")
+                
+                try {
+                    val uiSettings = XposedHelpers.callMethod(mapInstance, "getUiSettings")
+                    // 百度 UiSettings 没有 setZoomControlsEnabled (百度根本不提供原生缩放按钮),
+                    // 调用会抛 NoSuchMethodError 被静默吞掉。统一关闭引擎原生按钮(若存在),
+                    // 改用右下角自定义 +/- 控件 (见 zoomStep), 三引擎表现一致。
+                    try { XposedHelpers.callMethod(uiSettings, "setZoomControlsEnabled", false) } catch (e: Throwable) {}
+                    // 启用全部手势(拖动/缩放/旋转/倾斜), 确保极速版地图可交互
+                    try { XposedHelpers.callMethod(uiSettings, "setAllGesturesEnabled", true) } catch (e: Throwable) {}
+                    try { XposedHelpers.callMethod(uiSettings, "setScrollGesturesEnabled", true) } catch (e: Throwable) {}
+                    try { XposedHelpers.callMethod(uiSettings, "setZoomGesturesEnabled", true) } catch (e: Throwable) {}
+                } catch (e: Throwable) {}
+            } else {
+                Toast.makeText(activity, "⚠️ 未检测到兼容的地图引擎，已进入盲狙模式", Toast.LENGTH_LONG).show()
+            }
+        } catch (e: Throwable) {}
+
+        val moveCameraTo = { lat: Double, lng: Double, zoom: Float ->
+            if (mapInstance != null && pkgPrefix.isNotEmpty()) {
+                try {
+                    if (engineType == 3) {
+                        // ── 百度地图: setMapStatus + MapStatusUpdateFactory ──
+                        // 百度没有 CameraUpdateFactory.newLatLngZoom, 用 MapStatus.Builder 构造目标+缩放,
+                        // 再通过 MapStatusUpdateFactory.newMapStatus() 生成 update, 最后 setMapStatus。
+                        val latLng = XposedHelpers.newInstance(classLoader.loadClass(latLngClassName), lat, lng)
+                        val builder = XposedHelpers.newInstance(classLoader.loadClass("$pkgPrefix.MapStatus\$Builder"))
+                        XposedHelpers.callMethod(builder, "target", latLng)
+                        XposedHelpers.callMethod(builder, "zoom", zoom)
+                        val mapStatus = XposedHelpers.callMethod(builder, "build")
+                        val factoryClass = classLoader.loadClass("$pkgPrefix.MapStatusUpdateFactory")
+                        val update = XposedHelpers.callStaticMethod(factoryClass, "newMapStatus", mapStatus)
+                        XposedHelpers.callMethod(mapInstance, "setMapStatus", update)
+                    } else {
+                        // ── 腾讯 / 高德: moveCamera + CameraUpdateFactory ──
+                        val latLng = XposedHelpers.newInstance(classLoader.loadClass(latLngClassName), lat, lng)
+                        val cameraUpdateFactoryClass = classLoader.loadClass("$pkgPrefix.CameraUpdateFactory")
+                        val update = XposedHelpers.callStaticMethod(cameraUpdateFactoryClass, "newLatLngZoom", latLng, zoom)
+                        XposedHelpers.callMethod(mapInstance, "moveCamera", update)
+                    }
+                } catch(e:Throwable){}
+            }
+        }
+
+        mainHandler.postDelayed({
+            if (isRadarMode) {
+                moveCameraTo(radarLat, radarLng, 18f)
+                if (mapInstance != null && pkgPrefix.isNotEmpty()) {
+                    try {
+                        val latLng = XposedHelpers.newInstance(classLoader.loadClass(latLngClassName), radarLat, radarLng)
+                        val markerOptions = XposedHelpers.newInstance(classLoader.loadClass(markerOptionsClassName))
+                        XposedHelpers.callMethod(markerOptions, "position", latLng)
+                        XposedHelpers.callMethod(markerOptions, "title", "雷达锁定目标")
+                        // 百度用 addOverlay(MarkerOptions); 腾讯/高德用 addMarker(MarkerOptions)
+                        val addMethod = if (engineType == 3) "addOverlay" else "addMarker"
+                        XposedHelpers.callMethod(mapInstance, addMethod, markerOptions)
+                    } catch(e: Throwable) {}
+                }
+                Toast.makeText(activity, "目标锁定", Toast.LENGTH_SHORT).show()
+            } else {
+                val currentLat = Config.getCustomLat(activity)
+                val currentLng = Config.getCustomLng(activity)
+                if (currentLat != 0.0 && currentLng != 0.0) {
+                    moveCameraTo(currentLat, currentLng, 18f)
+                }
+            }
+        }, 500)
+
+        // 引擎无关的缩放: 百度用 MapStatusUpdateFactory.zoomIn/Out + setMapStatus;
+        // 高德/腾讯用 CameraUpdateFactory.zoomIn/Out + moveCamera。
+        // 绕过百度无原生缩放按钮(setZoomControlsEnabled 不存在)的限制。
+        val zoomStep = { zoomIn: Boolean ->
+            if (mapInstance != null && pkgPrefix.isNotEmpty()) {
+                try {
+                    if (engineType == 3) {
+                        val factoryClass = classLoader.loadClass("$pkgPrefix.MapStatusUpdateFactory")
+                        val update = XposedHelpers.callStaticMethod(factoryClass, if (zoomIn) "zoomIn" else "zoomOut")
+                        XposedHelpers.callMethod(mapInstance, "setMapStatus", update)
+                    } else {
+                        val factoryClass = classLoader.loadClass("$pkgPrefix.CameraUpdateFactory")
+                        val update = XposedHelpers.callStaticMethod(factoryClass, if (zoomIn) "zoomIn" else "zoomOut")
+                        XposedHelpers.callMethod(mapInstance, "moveCamera", update)
+                    }
+                } catch (e: Throwable) {}
+            }
+        }
+
+        // ================== UI 控件部分 ==================
+        val searchWrapper = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.TOP; setMargins(dp2px(activity, 16f), dp2px(activity, 40f), dp2px(activity, 16f), 0)
+            }
+            if (isRadarMode) visibility = View.GONE
+        }
+
+        val suggestionScrollView = ScrollView(activity).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp2px(activity, 250f)).apply { topMargin = dp2px(activity, 10f) }
+            background = GradientDrawable().apply { setColor(Color.parseColor("#F5FFFFFF")); cornerRadius = dp2px(activity, 16f).toFloat() }
+            if (Build.VERSION.SDK_INT >= 21) elevation = 15f
+            visibility = View.GONE
+        }
+
+        val searchBar = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = GradientDrawable().apply { setColor(Color.parseColor("#E6FFFFFF")); cornerRadius = dp2px(activity, 24f).toFloat() }
+            setPadding(dp2px(activity, 16f), dp2px(activity, 6f), dp2px(activity, 8f), dp2px(activity, 6f))
+            if (Build.VERSION.SDK_INT >= 21) elevation = 10f
+        }
+
+        val searchInput = EditText(activity).apply {
+            hint = if (engineType == 2) "搜索地名" else if (engineType == 1) "搜索地名" else "搜索地名"
+            textSize = 14f; setTextColor(Color.BLACK); setBackgroundColor(Color.TRANSPARENT); setSingleLine()
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        
+        // 🚀 新增：地图内核切换按钮（短按切换内核，长按填入 API Key）
+        val engineBtn = Button(activity).apply {
+            text = "更改内核"
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply { setColor(Color.parseColor("#9C27B0")); cornerRadius = dp2px(activity, 16f).toFloat() }
+            layoutParams = LinearLayout.LayoutParams(dp2px(activity, 65f), dp2px(activity, 36f)).apply { marginStart = dp2px(activity, 5f) }
+            
+            // 【短按逻辑】切换地图内核
+            setOnClickListener {
+                val t = Theme.current(activity)
+                val currentPref = prefs.getInt("map_engine_pref", 0)
+                val options = arrayOf("自动检测 (推荐)", "强制腾讯地图", "强制高德地图", "强制百度地图")
+                
+                AlertDialog.Builder(activity, iosDialogTheme(t))
+                    .setTitle("切换地图内核")
+                    .setSingleChoiceItems(options, currentPref) { dialog, which ->
+                        prefs.edit().putInt("map_engine_pref", which).apply()
+                        Toast.makeText(activity, "保存成功！请关闭面板后重新打开生效。", Toast.LENGTH_LONG).show()
+                        dialog.dismiss()
+                        closeMapOverlay()
+                    }.show()
+            }
+
+            // 🚀 【长按逻辑】填写高德地图 API Key
+            setOnLongClickListener {
+                val t = Theme.current(activity)
+                val textColor = t.textPrimary
+                val hintColor = t.textTertiary
+                val bgDrawable = GradientDrawable().apply { 
+                    setColor(t.cardElevated)
+                    cornerRadius = dp2px(activity, 12f).toFloat() 
+                }
+
+                val inputLayout = LinearLayout(activity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp2px(activity, 25f), dp2px(activity, 10f), dp2px(activity, 25f), dp2px(activity, 10f))
+                }
+                
+                val input = EditText(activity).apply {
+                    hint = "请粘贴你的高德 Web服务 Key"
+                    setHintTextColor(hintColor)
+                    setText(Config.getApiKey(activity))
+                    textSize = 14f
+                    setPadding(dp2px(activity, 15f), dp2px(activity, 15f), dp2px(activity, 15f), dp2px(activity, 15f))
+                    background = bgDrawable
+                    setTextColor(textColor)
+                }
+                
+                val tips = activity.iosSectionFooter("提示: 请前往 高德开放平台(lbs.amap.com) 免费申请【Web服务】类型的 Key，填入后即可永久激活上方搜索框的智能地点联想功能。", t).apply {
+                    setPadding(0, dp2px(activity, 10f), 0, 0)
+                }
+                
+                inputLayout.addView(input)
+                inputLayout.addView(tips)
+
+                AlertDialog.Builder(activity, iosDialogTheme(t))
+                    .setTitle("🔑 设置 API Key")
+                    .setView(inputLayout)
+                    .setPositiveButton("保存") { _, _ ->
+                        val newKey = input.text.toString().trim()
+                        
+                        // 写入本地配置
+                        prefs.edit().putString("amap_api_key", newKey).apply()
+                        
+                        // 发送广播同步给模块层，让 Config 能立即读到
+                        val intent = Intent("bxxd.hook.MAIN_SYNC_PUSH")
+                        intent.putExtra("key", "amap_api_key")
+                        intent.putExtra("value", newKey)
+                        activity.sendBroadcast(intent)
+                        
+                        Toast.makeText(activity, "API Key 已保存！现在可以直接在上方搜索地名了。", Toast.LENGTH_SHORT).show()
+                    }
+                    .setNegativeButton("取消", null)
+                    .show()
+                true // 返回 true 表示消耗了长按事件
+            }
+        }
+
+        val closeBtn = Button(activity).apply {
+            text = "✖"; setTextColor(Color.WHITE)
+            background = GradientDrawable().apply { setColor(Color.parseColor("#F44336")); cornerRadius = dp2px(activity, 16f).toFloat() }
+            layoutParams = LinearLayout.LayoutParams(dp2px(activity, 36f), dp2px(activity, 36f)).apply { marginStart = dp2px(activity, 10f) }
+            setOnClickListener { 
+                if (searchInput.text.isNotEmpty()) {
+                    isAutoFilling = true
+                    searchInput.setText("")
+                    isAutoFilling = false
+                    suggestionScrollView.visibility = View.GONE
+                } else {
+                    closeMapOverlay() 
+                }
+            } 
+        }
+        searchBar.addView(searchInput); searchBar.addView(engineBtn); searchBar.addView(closeBtn)
+        searchWrapper.addView(searchBar)
+
+        val coordInputLayout = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp2px(activity, 10f) }
+            background = GradientDrawable().apply { setColor(Color.parseColor("#F1F8E9")); cornerRadius = dp2px(activity, 16f).toFloat() }
+            setPadding(dp2px(activity, 14f), dp2px(activity, 12f), dp2px(activity, 14f), dp2px(activity, 12f))
+            if (Build.VERSION.SDK_INT >= 21) elevation = 10f
+            visibility = View.GONE
+        }
+
+        val latInputRow = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        latInputRow.addView(TextView(activity).apply { text = "纬度:"; textSize = 14f; setTextColor(Color.parseColor("#33691E")); setTypeface(null, android.graphics.Typeface.BOLD); layoutParams = LinearLayout.LayoutParams(dp2px(activity, 45f), LinearLayout.LayoutParams.WRAP_CONTENT) })
+        val latInput = EditText(activity).apply {
+            hint = "39.9042"; textSize = 14f; setTextColor(Color.BLACK); setSingleLine()
+            background = GradientDrawable().apply { setColor(Color.parseColor("#FFFFFF")); cornerRadius = dp2px(activity, 8f).toFloat() }
+            setPadding(dp2px(activity, 10f), dp2px(activity, 8f), dp2px(activity, 10f), dp2px(activity, 8f))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL or android.text.InputType.TYPE_NUMBER_FLAG_SIGNED
+        }
+        latInputRow.addView(latInput)
+
+        val lngInputRow = LinearLayout(activity).apply { 
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp2px(activity, 10f) }
+        }
+        lngInputRow.addView(TextView(activity).apply { text = "经度:"; textSize = 14f; setTextColor(Color.parseColor("#33691E")); setTypeface(null, android.graphics.Typeface.BOLD); layoutParams = LinearLayout.LayoutParams(dp2px(activity, 45f), LinearLayout.LayoutParams.WRAP_CONTENT) })
+        val lngInput = EditText(activity).apply {
+            hint = "116.4074"; textSize = 14f; setTextColor(Color.BLACK); setSingleLine()
+            background = GradientDrawable().apply { setColor(Color.parseColor("#FFFFFF")); cornerRadius = dp2px(activity, 8f).toFloat() }
+            setPadding(dp2px(activity, 10f), dp2px(activity, 8f), dp2px(activity, 10f), dp2px(activity, 8f))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL or android.text.InputType.TYPE_NUMBER_FLAG_SIGNED
+        }
+        lngInputRow.addView(lngInput)
+
+        val coordBtnRow = LinearLayout(activity).apply { 
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp2px(activity, 12f) }
+        }
+        val gotoBtn = Button(activity).apply {
+            text = "定位"; textSize = 13f; setTextColor(Color.WHITE)
+            background = GradientDrawable().apply { setColor(Color.parseColor("#4CAF50")); cornerRadius = dp2px(activity, 12f).toFloat() }
+            layoutParams = LinearLayout.LayoutParams(0, dp2px(activity, 36f), 1f).apply { marginEnd = dp2px(activity, 8f) }
+        }
+        val pasteBtn = Button(activity).apply {
+            text = "粘贴"; textSize = 13f; setTextColor(Color.parseColor("#2196F3"))
+            background = GradientDrawable().apply { setColor(Color.parseColor("#E3F2FD")); cornerRadius = dp2px(activity, 12f).toFloat() }
+            layoutParams = LinearLayout.LayoutParams(0, dp2px(activity, 36f), 1f).apply { marginStart = dp2px(activity, 8f) }
+        }
+        coordBtnRow.addView(gotoBtn); coordBtnRow.addView(pasteBtn)
+
+        coordInputLayout.addView(latInputRow); coordInputLayout.addView(lngInputRow); coordInputLayout.addView(coordBtnRow)
+
+        val coordToggleBtn = Button(activity).apply {
+            text = "📍 输入经纬度定位"; textSize = 13f; setTextColor(Color.parseColor("#4CAF50"))
+            background = GradientDrawable().apply { setColor(Color.parseColor("#E8F5E9")); cornerRadius = dp2px(activity, 12f).toFloat() }
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp2px(activity, 36f)).apply { topMargin = dp2px(activity, 10f) }
+            setOnClickListener {
+                coordInputLayout.visibility = if (coordInputLayout.visibility == View.GONE) View.VISIBLE else View.GONE
+                text = if (coordInputLayout.visibility == View.VISIBLE) "▼ 收起面板" else "📍 输入经纬度定位"
+            }
+            if (isRadarMode) visibility = View.GONE
+        }
+        searchWrapper.addView(coordToggleBtn)
+        searchWrapper.addView(coordInputLayout)
+
+        gotoBtn.setOnClickListener {
+            val lat = latInput.text.toString().trim().toDoubleOrNull()
+            val lng = lngInput.text.toString().trim().toDoubleOrNull()
+            if (lat != null && lng != null && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+                blindLat = lat
+                blindLng = lng
+                if (mapInstance != null) {
+                    moveCameraTo(lat, lng, 18f)
+                } else {
+                    Toast.makeText(activity, "坐标已锁定，点击确认即可", Toast.LENGTH_SHORT).show()
+                }
+            } else { Toast.makeText(activity, "请输入有效的经纬度", Toast.LENGTH_SHORT).show() }
+        }
+
+        pasteBtn.setOnClickListener {
+            val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            val clip = clipboard.primaryClip
+            if (clip != null && clip.itemCount > 0) {
+                val text = clip.getItemAt(0).text?.toString()?.trim() ?: ""
+                val pattern = Regex("""(-?\d+\.\d+)""")
+                val matches = pattern.findAll(text).toList()
+                if (matches.size >= 2) {
+                    var num1 = matches[0].value.toDouble()
+                    var num2 = matches[1].value.toDouble()
+                    
+                    var lat = num1; var lng = num2
+                    if (abs(num1) > 90.0 && abs(num2) <= 90.0) {
+                        lat = num2; lng = num1
+                    }
+
+                    latInput.setText(lat.toString())
+                    lngInput.setText(lng.toString())
+                    blindLat = lat
+                    blindLng = lng
+
+                    if (mapInstance != null) {
+                        moveCameraTo(lat, lng, 18f)
+                        Toast.makeText(activity, "坐标已粘贴并锁定！", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(activity, "坐标已粘入面板", Toast.LENGTH_SHORT).show()
+                    }
+                } else { Toast.makeText(activity, "剪贴板中未找到有效的经纬度", Toast.LENGTH_SHORT).show() }
+            } else { Toast.makeText(activity, "剪贴板为空", Toast.LENGTH_SHORT).show() }
+        }
+
+        val suggestionListContainer = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp2px(activity, 10f), dp2px(activity, 10f), dp2px(activity, 10f), dp2px(activity, 10f))
+        }
+        
+        suggestionScrollView.addView(suggestionListContainer)
+        searchWrapper.addView(suggestionScrollView)
+        mapContainer.addView(searchWrapper)
+
+        val apiKey = Config.getApiKey(activity)
+        searchInput.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                if (isAutoFilling) return 
+                
+                val query = s.toString().trim()
+                if (query.isEmpty()) {
+                    suggestionScrollView.visibility = View.GONE
+                    return
+                }
+
+                if (apiKey.isNotEmpty()) {
+                    MapHelper.searchAMapSuggestionOnline(activity, query, apiKey) { dataArray: JSONArray ->
+                        suggestionListContainer.removeAllViews()
+                        if (dataArray.length() > 0) {
+                            suggestionScrollView.visibility = View.VISIBLE
+                            for (i in 0 until dataArray.length()) {
+                                val item = dataArray.getJSONObject(i)
+                                val title = item.optString("name", "")
+                                val locationStr = item.optString("location", "")
+                                
+                                if (locationStr.isEmpty() || !locationStr.contains(",")) continue
+                                
+                                val addressPart = item.optString("district", "") + item.optString("address", "")
+                                val cleanAddress = addressPart.replace("[]", "").trim()
+                                if (cleanAddress.isEmpty()) continue
+
+                                var lat = 0.0; var lng = 0.0
+                                val parts = locationStr.split(",")
+                                if (parts.size == 2) {
+                                    lng = parts[0].toDoubleOrNull() ?: 0.0
+                                    lat = parts[1].toDoubleOrNull() ?: 0.0
+                                }
+                                if (lat == 0.0 || lng == 0.0) continue 
+
+                                val row = LinearLayout(activity).apply {
+                                    orientation = LinearLayout.VERTICAL
+                                    setPadding(dp2px(activity, 10f), dp2px(activity, 10f), dp2px(activity, 10f), dp2px(activity, 10f))
+                                    addView(TextView(activity).apply { text = title; textSize = 15f; setTextColor(Color.BLACK); setTypeface(null, android.graphics.Typeface.BOLD) })
+                                    addView(TextView(activity).apply { text = cleanAddress; textSize = 12f; setTextColor(Color.GRAY); setPadding(0, dp2px(activity, 4f), 0, 0) })
+                                    
+                                    setOnClickListener {
+                                        isAutoFilling = true
+                                        searchInput.setText(title)
+                                        searchInput.setSelection(title.length)
+                                        isAutoFilling = false
+                                        
+                                        suggestionScrollView.visibility = View.GONE
+                                        blindLat = lat
+                                        blindLng = lng
+                                        if (lat != 0.0 && lng != 0.0 && mapInstance != null) {
+                                            moveCameraTo(lat, lng, 18f)
+                                        } else {
+                                            Toast.makeText(activity, "已选定: $title", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                }
+                                suggestionListContainer.addView(row)
+                                if (i < dataArray.length() - 1) suggestionListContainer.addView(View(activity).apply { setBackgroundColor(Color.parseColor("#E0E0E0")); layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 2) })
+                            }
+                            if (suggestionListContainer.childCount == 0) suggestionScrollView.visibility = View.GONE
+                        } else { suggestionScrollView.visibility = View.GONE }
+                    }
+                } else { suggestionScrollView.visibility = View.GONE }
+            }
+        })
+
+        val centerPointer = TextView(activity).apply {
+            text = "📍"; textSize = 30f; gravity = Gravity.CENTER
+            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.CENTER; bottomMargin = dp2px(activity, 15f) }
+            if (isRadarMode || engineType == 0) visibility = View.GONE 
+        }
+        mapContainer.addView(centerPointer)
+
+        val favLayout = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.BOTTOM; setMargins(dp2px(activity, 24f), 0, dp2px(activity, 24f), dp2px(activity, 95f))
+            }
+            if (isRadarMode) visibility = View.GONE
+        }
+        
+        val getCenterCoordinate = {
+            if (mapInstance != null && pkgPrefix.isNotEmpty()) {
+                try {
+                    if (engineType == 3) {
+                        // 百度: getMapStatus().target (LatLng), 不走 cameraPosition
+                        val mapStatus = XposedHelpers.callMethod(mapInstance, "getMapStatus")
+                        val target = XposedHelpers.getObjectField(mapStatus, "target")
+                        val lat = try { XposedHelpers.callMethod(target, "getLatitude") as Double } catch(e:Throwable) { XposedHelpers.getDoubleField(target, "latitude") }
+                        val lng = try { XposedHelpers.callMethod(target, "getLongitude") as Double } catch(e:Throwable) { XposedHelpers.getDoubleField(target, "longitude") }
+                        Pair(lat, lng)
+                    } else {
+                        // 腾讯/高德: getCameraPosition().target
+                        val cameraPosition = XposedHelpers.callMethod(mapInstance, "getCameraPosition")
+                        val target = XposedHelpers.getObjectField(cameraPosition, "target")
+                        val lat = try { XposedHelpers.callMethod(target, "getLatitude") as Double } catch(e:Throwable) { XposedHelpers.getDoubleField(target, "latitude") }
+                        val lng = try { XposedHelpers.callMethod(target, "getLongitude") as Double } catch(e:Throwable) { XposedHelpers.getDoubleField(target, "longitude") }
+                        Pair(lat, lng)
+                    }
+                } catch(e:Throwable) { null }
+            } else if (blindLat != 0.0 && blindLng != 0.0) {
+                Pair(blindLat, blindLng)
+            } else null
+        }
+
+        // 顶部左上角坐标 + 名称显示叠层 (拖动/缩放后自动刷新; 长按复制)
+        // topMargin=110f 避开顶部搜索框区域 (searchWrapper margin=40f + 自身高度~60f)
+        val coordOverlay = TextView(activity).apply {
+            text = if (isRadarMode) "📍 坐标获取中..." else "📍 移动地图后自动刷新"
+            setTextColor(Color.WHITE); textSize = 12f
+            setPadding(dp2px(activity, 12f), dp2px(activity, 8f), dp2px(activity, 12f), dp2px(activity, 8f))
+            background = GradientDrawable().apply { setColor(Color.parseColor("#CC000000")); cornerRadius = dp2px(activity, 12f).toFloat() }
+            if (Build.VERSION.SDK_INT >= 21) elevation = 6f
+            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.TOP or Gravity.START
+                setMargins(dp2px(activity, 12f), dp2px(activity, 110f), dp2px(activity, 12f), 0)
+            }
+        }
+        var lastGeocodeLat = 0.0
+        var lastGeocodeLng = 0.0
+        var geocodeBusy = false
+        val refreshCoordDisplay = {
+            val center = getCenterCoordinate()
+            if (center != null) {
+                val (clat, clng) = center
+                coordOverlay.text = "📍 ${String.format(java.util.Locale.US, "%.6f", clat)}, ${String.format(java.util.Locale.US, "%.6f", clng)}\n名称获取中..."
+                // 防抖: 同一位置(5位精度内)且正在查询时不重复请求逆地理
+                if (!geocodeBusy && (String.format(java.util.Locale.US, "%.5f", clat) != String.format(java.util.Locale.US, "%.5f", lastGeocodeLat) || String.format(java.util.Locale.US, "%.5f", clng) != String.format(java.util.Locale.US, "%.5f", lastGeocodeLng))) {
+                    geocodeBusy = true
+                    lastGeocodeLat = clat; lastGeocodeLng = clng
+                    val apiKey = Config.getApiKey(activity)
+                    Thread {
+                        val name = MapHelper.reverseGeocode(clat, clng, apiKey)
+                        mainHandler.post {
+                            try {
+                                geocodeBusy = false
+                                coordOverlay.text = "📍 ${String.format(java.util.Locale.US, "%.6f", clat)}, ${String.format(java.util.Locale.US, "%.6f", clng)}\n$name"
+                            } catch(e:Throwable){}
+                        }
+                    }.start()
+                } else if (geocodeBusy || (clat == lastGeocodeLat && clng == lastGeocodeLng)) {
+                    // 恢复已有名称 (避免闪烁)
+                    coordOverlay.text = "📍 ${String.format(java.util.Locale.US, "%.6f", clat)}, ${String.format(java.util.Locale.US, "%.6f", clng)}\n名称获取中..."
+                }
+            }
+        }
+        coordOverlay.setOnLongClickListener {
+            val center = getCenterCoordinate()
+            if (center != null) {
+                (activity.getSystemService(Context.CLIPBOARD_SERVICE) as android.text.ClipboardManager).apply { text = "${center.first}, ${center.second}" }
+                Toast.makeText(activity, "坐标已复制", Toast.LENGTH_SHORT).show()
+            }
+            true
+        }
+        mapContainer.addView(coordOverlay)
+        // 雷达模式打开后直接显示目标坐标名称
+        if (isRadarMode) mainHandler.postDelayed({ refreshCoordDisplay() }, 800)
+
+        // ================== 地图拖动/缩放后自动刷新坐标显示 ==================
+        // 监听 mapView 的 View.OnTouchListener: 手势抬起(ACTION_UP)后延迟刷新左上角坐标。
+        // 覆盖拖动、双击缩放、捏合缩放等所有手势 (View 级监听, 三引擎通用)。
+        if (mapView != null) {
+            try {
+                (mapView as android.view.View).setOnTouchListener { _, event ->
+                    if (event.action == android.view.MotionEvent.ACTION_UP || event.action == android.view.MotionEvent.ACTION_CANCEL) {
+                        mainHandler.postDelayed({ refreshCoordDisplay() }, 300)
+                    }
+                    false  // 不消费事件, 让地图引擎正常处理手势
+                }
+            } catch (e: Throwable) {}
+            // 双保险: 引擎 SDK 级 setOnMapTouchListener (百度/高德均有, 动态代理匹配 onTouch)
+            try {
+                val onTouchMethod = mapInstance?.let { mi ->
+                    mi.javaClass.methods.firstOrNull { it.name == "setOnMapTouchListener" && it.parameterTypes.size == 1 }
+                }
+                if (onTouchMethod != null && mapInstance != null) {
+                    val listenerType = onTouchMethod.parameterTypes[0]
+                    val proxy = java.lang.reflect.Proxy.newProxyInstance(
+                        classLoader, arrayOf(listenerType)
+                    ) { _, m, args ->
+                        if (m.name == "onTouch" && args != null && args.isNotEmpty()) {
+                            val ev = args[0] as? android.view.MotionEvent
+                            if (ev != null && (ev.action == android.view.MotionEvent.ACTION_UP || ev.action == android.view.MotionEvent.ACTION_CANCEL)) {
+                                mainHandler.postDelayed({ refreshCoordDisplay() }, 300)
+                            }
+                        }
+                        null
+                    }
+                    onTouchMethod.invoke(mapInstance, proxy)
+                }
+            } catch (e: Throwable) {}
+        }
+
+        val btnAddFav = Button(activity).apply {
+            text = "⭐ 收藏当前"; textSize = 12f; setTextColor(Color.parseColor("#FF9800"))
+            background = GradientDrawable().apply { setColor(Color.parseColor("#FFF3E0")); cornerRadius = dp2px(activity, 15f).toFloat() }
+            layoutParams = LinearLayout.LayoutParams(0, dp2px(activity, 40f), 1f).apply { marginEnd = dp2px(activity, 8f) }
+            setOnClickListener { 
+                val center = getCenterCoordinate()
+                if (center != null) {
+                    Config.setCustomLocation(center.first, center.second, activity)
+                    MapHelper.showAddFavoriteDialog(activity) {}
+                } else {
+                    Toast.makeText(activity, "请先搜索或输入坐标", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+        val btnListFav = Button(activity).apply {
+            text = "📂 坐标收藏夹"; textSize = 12f; setTextColor(Color.parseColor("#2196F3"))
+            background = GradientDrawable().apply { setColor(Color.parseColor("#E3F2FD")); cornerRadius = dp2px(activity, 15f).toFloat() }
+            layoutParams = LinearLayout.LayoutParams(0, dp2px(activity, 40f), 1f).apply { marginStart = dp2px(activity, 8f) }
+            setOnClickListener { 
+                MapHelper.showFavoriteListDialog(activity) { lat, lng -> 
+                    blindLat = lat; blindLng = lng
+                    if (mapInstance != null) moveCameraTo(lat, lng, 18f)
+                    else Toast.makeText(activity, "坐标已提取，点击确认", Toast.LENGTH_SHORT).show()
+                } 
+            }
+        }
+        favLayout.addView(btnAddFav); favLayout.addView(btnListFav)
+        mapContainer.addView(favLayout)
+
+        if (!isRadarMode) {
+            val btnConfirmMap = Button(activity).apply {
+                text = "确认并保存位置"; textSize = 16f; setTextColor(Color.WHITE)
+                background = GradientDrawable().apply { setColor(Color.parseColor("#4CAF50")); cornerRadius = dp2px(activity, 24f).toFloat() }
+                layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, dp2px(activity, 55f)).apply {
+                    gravity = Gravity.BOTTOM; setMargins(dp2px(activity, 24f), 0, dp2px(activity, 24f), dp2px(activity, 30f))
+                }
+                setOnClickListener {
+                    val center = getCenterCoordinate()
+                    if (center != null) {
+                        Config.setCustomLocation(center.first, center.second, activity)
+                        val configPrefs = activity.getSharedPreferences("llhook_blued_local_v2", Context.MODE_PRIVATE)
+                        configPrefs.edit().putString("custom_lat", center.first.toString()).putString("custom_lng", center.second.toString()).putLong("master_timestamp", System.currentTimeMillis()).apply()
+                        MapHelper.pushOfflineLocation(center.first, center.second)
+                        activity.sendBroadcast(Intent("bxxd.hook.MAIN_SYNC_PUSH").apply { putExtra("key", "custom_lat"); putExtra("value", center.first.toString()) })
+                        activity.sendBroadcast(Intent("bxxd.hook.MAIN_SYNC_PUSH").apply { putExtra("key", "custom_lng"); putExtra("value", center.second.toString()) })
+                        Toast.makeText(activity, "已定位", Toast.LENGTH_LONG).show()
+                        closeMapOverlay() 
+                    } else { Toast.makeText(activity, "获取坐标失败！请手动搜索或输入", Toast.LENGTH_SHORT).show() }
+                }
+            }
+            mapContainer.addView(btnConfirmMap)
+        } else {
+            val radarBtnRow = LinearLayout(activity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, dp2px(activity, 55f)).apply {
+                    gravity = Gravity.BOTTOM; setMargins(dp2px(activity, 24f), 0, dp2px(activity, 24f), dp2px(activity, 30f))
+                }
+            }
+
+            val btnLocateRadar = Button(activity).apply {
+                text = " 定位到此"
+                textSize = 16f; setTextColor(Color.WHITE)
+                background = GradientDrawable().apply { setColor(Color.parseColor("#4CAF50")); cornerRadius = dp2px(activity, 24f).toFloat() }
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f).apply { marginEnd = dp2px(activity, 10f) }
+                if (Build.VERSION.SDK_INT >= 21) elevation = 10f
+                setOnClickListener {
+                    Config.setCustomLocation(radarLat, radarLng, activity)
+                    val configPrefs = activity.getSharedPreferences("llhook_blued_local_v2", Context.MODE_PRIVATE)
+                    configPrefs.edit().putString("custom_lat", radarLat.toString()).putString("custom_lng", radarLng.toString()).putLong("master_timestamp", System.currentTimeMillis()).apply()
+                    MapHelper.pushOfflineLocation(radarLat, radarLng)
+                    activity.sendBroadcast(Intent("bxxd.hook.MAIN_SYNC_PUSH").apply { putExtra("key", "custom_lat"); putExtra("value", radarLat.toString()) })
+                    activity.sendBroadcast(Intent("bxxd.hook.MAIN_SYNC_PUSH").apply { putExtra("key", "custom_lng"); putExtra("value", radarLng.toString()) })
+                    Toast.makeText(activity, " 已成功将位置锁定至目标附近！", Toast.LENGTH_LONG).show()
+                    closeMapOverlay()
+                }
+            }
+
+            val btnCloseRadar = Button(activity).apply {
+                text = "关闭雷达"
+                textSize = 16f; setTextColor(Color.WHITE)
+                background = GradientDrawable().apply { setColor(Color.parseColor("#F44336")); cornerRadius = dp2px(activity, 24f).toFloat() }
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f).apply { marginStart = dp2px(activity, 10f) }
+                if (Build.VERSION.SDK_INT >= 21) elevation = 10f
+                setOnClickListener { closeMapOverlay() } 
+            }
+
+            radarBtnRow.addView(btnLocateRadar)
+            radarBtnRow.addView(btnCloseRadar)
+            mapContainer.addView(radarBtnRow)
+        }
+
+        // ================== 自定义缩放控件 (引擎无关, 解决百度无原生缩放按钮 → 无摇杆) ==================
+        val zoomControlPanel = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GradientDrawable().apply { setColor(Color.parseColor("#E6FFFFFF")); cornerRadius = dp2px(activity, 14f).toFloat() }
+            if (Build.VERSION.SDK_INT >= 21) elevation = 8f
+            setPadding(dp2px(activity, 2f), dp2px(activity, 2f), dp2px(activity, 2f), dp2px(activity, 2f))
+            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.BOTTOM or Gravity.END
+                setMargins(0, 0, dp2px(activity, 16f), dp2px(activity, 100f))
+            }
+        }
+        val btnZoomIn = Button(activity).apply {
+            text = "＋"; textSize = 16f; setTextColor(Color.parseColor("#1976D2"))
+            setBackgroundColor(Color.TRANSPARENT); minimumWidth = 0; minimumHeight = 0
+            setPadding(dp2px(activity, 10f), dp2px(activity, 4f), dp2px(activity, 10f), dp2px(activity, 4f))
+            setOnClickListener { zoomStep(true) }
+        }
+        val ctrlDivider = View(activity).apply {
+            setBackgroundColor(Color.parseColor("#E0E0E0"))
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1)
+        }
+        val btnZoomOut = Button(activity).apply {
+            text = "－"; textSize = 16f; setTextColor(Color.parseColor("#1976D2"))
+            setBackgroundColor(Color.TRANSPARENT); minimumWidth = 0; minimumHeight = 0
+            setPadding(dp2px(activity, 10f), dp2px(activity, 4f), dp2px(activity, 10f), dp2px(activity, 4f))
+            setOnClickListener { zoomStep(false) }
+        }
+        zoomControlPanel.addView(btnZoomIn)
+        zoomControlPanel.addView(ctrlDivider)
+        zoomControlPanel.addView(btnZoomOut)
+        mapContainer.addView(zoomControlPanel)
+
+        rootView.addView(mapContainer)
+        mapContainer.requestFocus() // 确保按键拦截生效
+    }
+
+    private fun dp2px(context: Context, dp: Float): Int = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, dp, context.resources.displayMetrics).toInt()
+}

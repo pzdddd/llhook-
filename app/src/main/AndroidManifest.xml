@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+
+    <!-- 进程保活所需 (来自 hook 项目的 KeepAliveService/Receiver) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <queries>
+        <package android:name="com.soft.blued" />
+        <package android:name="com.danlan.xiaolan" />
+        <package android:name="com.blued.international.lite" />
+        <package android:name="com.soft.blued.lite" />
+    </queries>
+
+    <application
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.MyApplication">
+
+        <meta-data
+            android:name="xposedmodule"
+            android:value="true" />
+        <meta-data
+            android:name="xposeddescription"
+            android:value="蓝钩 - 极速小助手 / 专注纯净体验" />
+        <meta-data
+            android:name="xposedminversion"
+            android:value="102" />
+        <meta-data
+            android:name="xposedscope"
+            android:resource="@array/xposed_scopes" />
+
+        <!-- 跨进程配置同步 ContentProvider (模块进程读/写, Blued 进程通过 contentResolver 兜底拉取) -->
+        <provider
+            android:name="bxxd.hook.SettingsProvider"
+            android:authorities="com.app.hook.settings"
+            android:exported="true"
+            android:process=":settings" />
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.MyApplication">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- 进程保活前台服务 (运行在模块 APK 自身进程, 独立于 Blued) -->
+        <service
+            android:name="bxxd.hook.KeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!-- 保活链唤醒枢纽: 开机 / Alarm 定时 / Blued 心跳 -->
+        <receiver
+            android:name="bxxd.hook.KeepAliveReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="bxxd.hook.KEEPALIVE_TICK" />
+                <action android:name="bxxd.hook.KEEPALIVE_START" />
+                <action android:name="bxxd.hook.KEEPALIVE_STOP" />
+                <action android:name="bxxd.hook.BLUED_ALIVE" />
+            </intent-filter>
+        </receiver>
+    </application>
+
+</manifest>
