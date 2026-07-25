@@ -17,17 +17,29 @@ import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
 import de.robv.android.xposed.callbacks.XC_LoadPackage
-import java.net.InetAddress
-import java.net.URL
 
+/**
+ * ============================================================================
+ *  屏蔽控件 id 类 —— 按 View ID 隐藏 UI 元素 (单一职责)
+ * ============================================================================
+ *
+ *  本类负责【屏蔽控件 id 类】: 按资源 id 名定位 App 内部 View 并彻底压扁隐藏
+ *  (开屏页/信息流伪装卡片/顶部横幅/我的页广告/访客广告/语音室/设置页条目/
+ *   身边列表广告/超级通话弹窗等)。
+ *
+ *  ── 网络层广告拦截不在本类 ──
+ *   网络层 (OkHttp / DNS / URL.openConnection) 请求拦截统一在 AdBlockHook (屏蔽广告类)。
+ *   本类只做 UI 控件净化, 职责单一、不 hook 任何网络栈。
+ *
+ *  ── 净化开关体系 ──
+ *   总开关 switch_remove_ads (老) 或逐项开关 purify_* (新) 任一打开即生效
+ *   (purifyEnabled / isPurifyEnabled 兼容旧总开关)。
+ *   PURIFY_ITEMS 为逐项清单, 供设置页净化中心 / 悬浮球菜单共用。
+ * ============================================================================
+ */
 object AdsHook : BaseHook {
 
-    // 底层网络拦截黑名单
-    private val adKeywords = listOf(
-       "hm-nrj.baidu.com"
-    )
-
-    // 🎯 终极 UI 暗杀名单
+    // 🎯 终极 UI 暗杀名单 (信息流列表压扁机用)
     private val targetViewIds = arrayOf(
         "card_style_3",
         "cl_style_1",
@@ -66,6 +78,7 @@ object AdsHook : BaseHook {
         "底部Tab·隐藏发现"        to "purify_tab_feed",
         // —— 发现页内容 ——
         "发现页·顶部广告"         to "purify_find_ad",
+        "广告位容器"             to "purify_ad_view",
         "发现页·地图找人入口"     to "purify_find_map",
         "发现页·首页二楼"         to "purify_find_floor",
         "发现页·金币签到引导"     to "purify_find_gold",
@@ -99,19 +112,18 @@ object AdsHook : BaseHook {
     }
 
     override fun init(lpparam: XC_LoadPackage.LoadPackageParam) {
-        hookSplashAds(lpparam)       // 🚀 1. 【听你的】直接 onCreate 秒跳，0秒开屏告别黑屏！
-        hookListEngineAds(lpparam)   // 2. 列表视图压扁机 (完美拦截伪装卡片)
-        hookOkHttpEngine(lpparam)    // 3. OkHttp 底层断网 (专杀呼唤API)
-        hookNetworkLayer()           // 4. 古老 URL 网络层兜底
-        hookHeaderAds(lpparam)       // 5. 顶部固定横幅隐藏
-        hookHomePurify(lpparam)       // 6. 底部 Tab 栏 + 发现页内容净化
-        hookMineAds(lpparam)         // 7. 我的页面精简
-        hookVisitorAds(lpparam)      // 8. 访客列表去广告
-        hookVoiceChatRoom(lpparam)   // 9. 语音聊天室精简
-        hookSettingsItems(lpparam)   // 10. 设置页条目净化
-        hookMineDataSetters(lpparam) // 11. 我的页动态条目过滤 (会员/收益/健康入口)
-        hookNearbyList(lpparam)      // 12. 身边列表: 个性签名 + 荷尔健康广告
-        hookSuperCallNotification(lpparam) // 13. 紫色"和他聊聊"超级通话弹窗拦截
+        hookSplashAds(lpparam)       // 1. 开屏页秒跳 (onCreate 直进主页, 0 秒告别黑屏)
+        hookListEngineAds(lpparam)   // 2. 信息流列表压扁机 (拦截伪装广告卡片)
+        hookHeaderAds(lpparam)       // 3. 顶部固定横幅静默隐藏
+        hookHomePurify(lpparam)      // 4. 底部 Tab 栏 + 发现页内容净化
+        hookMineAds(lpparam)         // 5. 我的页面精简 (区块行 + 广告/VIP 入口)
+        hookVisitorAds(lpparam)      // 6. 访客列表去广告
+        hookVoiceChatRoom(lpparam)   // 7. 语音聊天室剔除
+        hookSettingsItems(lpparam)   // 8. 设置页条目净化
+        hookMineDataSetters(lpparam) // 9. 我的页动态条目过滤 (会员/收益/健康入口)
+        hookNearbyList(lpparam)      // 10. 身边列表: 个性签名 + 荷尔健康广告
+        hookSuperCallNotification(lpparam) // 11. 紫色「和他聊聊」超级通话弹窗拦截
+        // 网络层广告/请求拦截统一在 AdBlockHook (屏蔽广告类), 本类不 hook 网络栈
     }
 
     // ==========================================
@@ -290,7 +302,7 @@ object AdsHook : BaseHook {
     }
 
     // ==========================================
-    // 🛡️ 4. 顶部固定横幅静默隐藏
+    // 🛡️ 3. 顶部固定横幅静默隐藏
     // ==========================================
     private fun hookHeaderAds(lpparam: XC_LoadPackage.LoadPackageParam) {
         try {
@@ -321,67 +333,7 @@ object AdsHook : BaseHook {
     }
 
     // ==========================================
-    // 🌐 3. OkHttp 强力域名劫持
-    // ==========================================
-    private fun hookOkHttpEngine(lpparam: XC_LoadPackage.LoadPackageParam) {
-        try {
-            val builderClass = XposedHelpers.findClassIfExists("okhttp3.Request\$Builder", lpparam.classLoader)
-            if (builderClass != null) {
-                XposedBridge.hookAllMethods(builderClass, "build", object : XC_MethodHook() {
-                    override fun beforeHookedMethod(param: MethodHookParam) {
-                        if (!Config.isFeatureEnabled("switch_block_ads")) return
-
-                        val builder = param.thisObject
-                        val urlObj = try { XposedHelpers.getObjectField(builder, "url") } catch(e:Throwable){null}
-                        val urlStr = urlObj?.toString()?.lowercase() ?: return
-
-                        val isCallApi = urlStr.contains("/users/call")
-                        val isExactAdPath = urlStr.contains("/obj/static/ad/")
-                        val isVoice = urlStr.contains("voice.blued.cn")
-                        val isAd = adKeywords.any { urlStr.contains(it) }
-
-                        if (isCallApi || isExactAdPath || isVoice || isAd) {
-                            try {
-                                val httpUrlClass = XposedHelpers.findClass("okhttp3.HttpUrl", lpparam.classLoader)
-                                val dummyUrl = XposedHelpers.callStaticMethod(httpUrlClass, "parse", "http://127.0.0.1/blocked_by_llhook")
-                                XposedHelpers.setObjectField(builder, "url", dummyUrl)
-                            } catch(e: Throwable) {}
-                        }
-                    }
-                })
-            }
-        } catch (e: Throwable) {}
-    }
-
-    // ==========================================
-    // 🌐 4. 古老网络层兜底 (DNS + Socket)
-    // ==========================================
-    private fun hookNetworkLayer() {
-        try {
-            InetAddress::class.java.findMethod { name == "getAllByName" && parameterTypes.size == 1 && parameterTypes[0] == String::class.java }.hookBefore { param ->
-                val host = param.args[0] as? String ?: return@hookBefore
-                if ((Config.isFeatureEnabled("switch_block_ads") && isAdHost(host)) || host.contains("voice.blued.cn")) {
-                    param.result = arrayOf(InetAddress.getByAddress(host, byteArrayOf(127, 0, 0, 1)))
-                }
-            }
-            val blockSocket = { param: XC_MethodHook.MethodHookParam ->
-                val urlStr = (param.thisObject as? URL)?.toString()?.lowercase() ?: ""
-                val host = (param.thisObject as? URL)?.host ?: ""
-                val isExactAdPath = urlStr.contains("/obj/static/ad/")
-                val isCallApi = urlStr.contains("/users/call")
-                if ((Config.isFeatureEnabled("switch_block_ads") && (isAdHost(host) || isExactAdPath || isCallApi)) || host.contains("voice.blued.cn")) {
-                    throw java.net.ConnectException("Connection blocked by llhook")
-                }
-            }
-            URL::class.java.findMethod { name == "openConnection" && parameterTypes.isEmpty() }.hookBefore(blockSocket)
-            URL::class.java.findMethod { name == "openConnection" && parameterTypes.size == 1 && parameterTypes[0] == java.net.Proxy::class.java }.hookBefore(blockSocket)
-        } catch (e: Throwable) {}
-    }
-
-    private fun isAdHost(host: String): Boolean = adKeywords.any { host.lowercase().contains(it) }
-
-    // ==========================================
-    // 🎙️ 9. 语音聊天室剔除
+    // 🎙️ 7. 语音聊天室剔除
     // ==========================================
     private fun hookVoiceChatRoom(lpparam: XC_LoadPackage.LoadPackageParam) {
         try {
@@ -404,7 +356,7 @@ object AdsHook : BaseHook {
     }
 
     // ==========================================
-    // 🚀 7. 清理“我的”页面广告
+    // 🚀 5. 清理“我的”页面广告
     // ==========================================
     private fun hookMineAds(lpparam: XC_LoadPackage.LoadPackageParam) {
         try {
@@ -488,7 +440,7 @@ object AdsHook : BaseHook {
     }
 
     // ==========================================
-    // ⚙️ 6. 底部 Tab 栏净化 + 发现页内容净化
+    // ⚙️ 4. 底部 Tab 栏净化 + 发现页内容净化
     //   底部导航布局 tab_main.xml: 每个 Tab 包在 HomeQBadgeContainer 里 (按显示文字匹配, 不靠 id 名)
     //     身边 = find_badge_container/ll_main_find   发现 = feed_badge_container/ll_main_feed
     //     直播 = live_badge_container/ll_main_live   (标准版与极速版 id 含义一致)
@@ -509,6 +461,9 @@ object AdsHook : BaseHook {
 
                 // —— 发现页内容净化 ——
                 hideViewByIdNames(decor, arrayOf("blued_ad_layout"), "purify_find_ad")
+                // ad_view_layout 是广告 SDK 运行时动态 inflate 后 addView 的占位容器
+                //   (不在任何静态布局里, jadx 也搜不到) → decorView 递归扫描能命中运行时挂载的 view
+                hideViewByIdNames(decor, arrayOf("ad_view_layout"), "purify_ad_view")
                 hideViewByIdNames(decor, arrayOf("map_pag_view"), "purify_find_map")
                 hideViewByIdNames(decor, arrayOf("second_floor", "iv_two_level", "second_floor_ad_icon"), "purify_find_floor")
                 hideViewByIdNames(decor, arrayOf("layout_gold_guide", "nearby_activity_tip", "tv_sign_days_tip", "tv_tip"), "purify_find_gold")
@@ -551,7 +506,7 @@ object AdsHook : BaseHook {
     }
 
     // ==========================================
-    // ⚙️ 10. 设置页条目净化 (隐藏指定设置项)
+    // ⚙️ 8. 设置页条目净化 (隐藏指定设置项)
     //   设置页 fragment_settings.xml 条目 id: 真人认证/直播设置/扫一扫/安全中心/调试等
     //   hook 点: androidx Fragment.onViewCreated, 用 ll_face_verify 作指纹识别设置页
     //   (不依赖设置页 Fragment 类名, 对任意版本鲁棒)
@@ -600,7 +555,7 @@ object AdsHook : BaseHook {
     }
 
     // =========================================
-    // ⚙️ 11. 我的页动态条目过滤 (极速版专用增强)
+    // ⚙️ 9. 我的页动态条目过滤 (极速版专用增强)
     //   极速版 MineNewFragment.a(MinePageModel) 被爱加密加固拆成 db(MineBanner)/fb(List<HealthyAD>)
     //   /gb(List<ColumnsItem>)/hb(ColumnsItem)/ib(HealthItem)/pb(VipInfo,...) 等单参 setter。
     //   方法名被混淆, 但【参数类型稳定】。枚举所有单 List 参数 setter, 按列表元素类型分流:
@@ -660,7 +615,7 @@ object AdsHook : BaseHook {
     }
 
     // =========================================
-    // ⚙️ 12. 身边列表: 个性签名注入 + 荷尔健康广告拦截
+    // ⚙️ 10. 身边列表: 个性签名注入 + 荷尔健康广告拦截
     //   hook 点: PeopleGridQuickAdapter.convert(BaseViewHolder, Object) —— 该方法是 BaseQuickAdapter
     //   库的合成桥接方法, 方法名固定不受加固混淆影响; 身边列表(网格/列表双模式)的 grid 版均继承自它。
     //     个性签名: UserFindResult.description 注入到 tv_name 下方一行 (默认关, 需手动开, 不随总净化开关)。
@@ -742,7 +697,7 @@ object AdsHook : BaseHook {
     }
 
     // =========================================
-    // ⚙️ 13. 紫色「和他聊聊」超级通话弹窗拦截
+    // ⚙️ 11. 紫色「和他聊聊」超级通话弹窗拦截
     //   来源: FollowedUsersNotificationManager —— 顶部偶尔弹出的紫色卡片 (super_call_notification,
     //   文案"和他聊聊", 配色 #612BFF, 3秒自动关闭)。它有多个 (FriendsNotificationExtra)->View 的
     //   A/B 卡片 builder, 其中一个构建 privilege_user_notification_test1_layout 即紫色卡。

@@ -149,6 +149,10 @@ object TrackHook : BaseHook {
                     return@hookAfter
                 }
 
+                // 🎛 手动追踪模式: 开启后进入主页【不再自动后台解算】,
+                // 只有用户点击「追踪」按钮时才发起解算 (省流量 / 隐蔽 / 按需)。
+                val isManualMode = Config.isFeatureEnabled("switch_track_manual", activity)
+
                 // 注入到 fl_all (fragment 根), 和聊天按钮同一容器
                 val fragView = XposedHelpers.callMethod(fragmentInstance, "getView") as? ViewGroup
                 val flAllId = activity.resources.getIdentifier("fl_all", "id", activity.packageName)
@@ -187,7 +191,7 @@ object TrackHook : BaseHook {
                         bottomMargin = dp(activity, 162f)
                     }
 
-                    // 【完整保留】短按点击逻辑
+                    // 短按: 有缓存结果则直接展示; 手动模式下无缓存则【手动触发解算】
                     setOnClickListener {
                         val uid = currentTargetUid
                         if (uid != null) {
@@ -196,6 +200,11 @@ object TrackHook : BaseHook {
                                 val showLat = res.exactLat ?: res.lat
                                 val showLng = res.exactLng ?: res.lng
                                 showResult(activity, res.success, res.msg, showLat, showLng)
+                            } else if (isManualMode) {
+                                Toast.makeText(activity, "正在手动解算目标位置…", Toast.LENGTH_SHORT).show()
+                                startTracking(activity, uid, true) { r ->
+                                    showResult(activity, r.success, r.msg, r.exactLat ?: r.lat, r.exactLng ?: r.lng)
+                                }
                             } else {
                                 Toast.makeText(activity, "雷达正在全速解算中，请稍候...", Toast.LENGTH_SHORT).show()
                             }
@@ -204,98 +213,29 @@ object TrackHook : BaseHook {
                         }
                     }
 
-                    // 【完整保留】长按空降地图底层注入逻辑
+                    // 长按空降官方地图: 有成功结果则直接打开; 手动模式下无结果则先解算再自动空降
                     setOnLongClickListener {
                         val uid = currentTargetUid
                         if (uid != null) {
                             val res = trackCache[uid]
-                            if (res != null && res.success) {
-                                val finalLat = res.exactLat ?: res.lat
-                                val finalLng = res.exactLng ?: res.lng
-                                val isExact = res.exactLat != null
-
-                                try {
-                                    val userInfoClass = XposedHelpers.findClassIfExists("com.blued.android.module.common.user.model.UserInfo", activity.classLoader)
-                                    if (userInfoClass != null) {
-                                        val loginUser = XposedHelpers.callMethod(XposedHelpers.callStaticMethod(userInfoClass, "getInstance"), "getLoginUserInfo")
-                                        backupLat = XposedHelpers.getObjectField(loginUser, "lat")?.toString()?.toDoubleOrNull() ?: 0.0
-                                        backupLng = XposedHelpers.getObjectField(loginUser, "lon")?.toString()?.toDoubleOrNull() ?: 0.0
-                                    }
-                                    if (backupLat == 0.0) backupLat = Config.getCustomLat(activity)
-                                    if (backupLng == 0.0) backupLng = Config.getCustomLng(activity)
-                                } catch(e: Throwable){}
-
-                                thread {
-                                    try {
-                                        val token = Config.getAuthToken(activity)
-                                        if (token.isNotEmpty()) {
-                                            updateMyServerLocation(token, finalLat, finalLng)
-                                        }
-                                        
-                                        mainHandler.post {
-                                            try {
-                                                isTrackingMapOpened = true 
-                                                val classLoader = activity.classLoader
-
-                                                if (isExact) {
-                                                    Toast.makeText(activity, "定位成功", Toast.LENGTH_SHORT).show()
-                                                } else {
-                                                    Toast.makeText(activity, "正在定位", Toast.LENGTH_SHORT).show()
-                                                }
-
-                                                val managerClass = XposedHelpers.findClass("com.soft.blued.ui.find.manager.MapFindManager", classLoader)
-                                                val beanClass = XposedHelpers.findClass("com.soft.blued.ui.find.manager.MapFindManager\$MapFindBean", classLoader)
-                                                
-                                                val beanInstance = beanClass.newInstance()
-                                                
-                                                var latInjected = false
-                                                var lngInjected = false
-                                                for (f in beanClass.declaredFields) {
-                                                    f.isAccessible = true
-                                                    val name = f.name.lowercase()
-                                                    if (f.type == String::class.java) {
-                                                        if (name == "longitude" || name == "lon" || name == "lng") {
-                                                            f.set(beanInstance, finalLng.toString())
-                                                            lngInjected = true
-                                                        } else if (name == "latitude" || name == "lat") {
-                                                            f.set(beanInstance, finalLat.toString())
-                                                            latInjected = true
-                                                        }
-                                                    }
-                                                }
-                                                
-                                                if (!latInjected || !lngInjected) {
-                                                    try { XposedHelpers.setObjectField(beanInstance, "a", finalLng.toString()) } catch(e:Throwable){}
-                                                    try { XposedHelpers.setObjectField(beanInstance, "b", finalLat.toString()) } catch(e:Throwable){}
-                                                }
-                                                
-                                                try { XposedHelpers.setObjectField(beanInstance, "d", "目标精准坐标") } catch(e:Throwable){}
-                                                try { XposedHelpers.setObjectField(beanInstance, "c", 0.0) } catch(e:Throwable){}      
-                                                
-                                                val managerInstance = XposedHelpers.callStaticMethod(managerClass, "a")
-                                                XposedHelpers.callMethod(managerInstance, "a", beanInstance)
-                                                
-                                                val terminalActivityClass = XposedHelpers.findClass("com.blued.android.core.ui.TerminalActivity", classLoader)
-                                                val mapFragmentClass = XposedHelpers.findClass("com.soft.blued.ui.find.fragment.FindSearchMapFragment", classLoader)
-                                                
-                                                val bundle = Bundle().apply {
-                                                    putInt("from_page", 2)
-                                                    putInt("find_map_tab", 0)
-                                                    putBoolean("is_map_find", true)
-                                                }
-                                                
-                                                XposedHelpers.callStaticMethod(terminalActivityClass, "d", activity, mapFragmentClass, bundle)
-                                            } catch (e: Exception) {
-                                                Toast.makeText(activity, "调用官方地图失败: ${e.message}", Toast.LENGTH_LONG).show()
-                                            }
-                                        }
-                                    } catch (e: Exception) {}
+                            when {
+                                res != null && res.success -> {
+                                    openTrackMap(activity, res.exactLat ?: res.lat, res.exactLng ?: res.lng, res.exactLat != null)
                                 }
-                            } else {
-                                Toast.makeText(activity, "解算中，请稍后再试", Toast.LENGTH_SHORT).show()
+                                isManualMode -> {
+                                    Toast.makeText(activity, "正在手动解算，完成后自动空降…", Toast.LENGTH_SHORT).show()
+                                    startTracking(activity, uid, true) { r ->
+                                        if (r.success) {
+                                            openTrackMap(activity, r.exactLat ?: r.lat, r.exactLng ?: r.lng, r.exactLat != null)
+                                        } else {
+                                            Toast.makeText(activity, "解算失败: ${r.msg}", Toast.LENGTH_LONG).show()
+                                        }
+                                    }
+                                }
+                                else -> Toast.makeText(activity, "解算中，请稍后再试", Toast.LENGTH_SHORT).show()
                             }
                         }
-                        true 
+                        true
                     }
                 }
                 rootLayout.addView(trackBtn)
@@ -311,55 +251,9 @@ object TrackHook : BaseHook {
                     if (uidFound.isNullOrEmpty()) return@thread
                     currentTargetUid = uidFound
 
-                    val token = Config.getAuthToken(activity)
-                    if (token.isEmpty()) return@thread
-                    if (trackCache.containsKey(uidFound)) return@thread
-
-                    // 因为有上方的拦截，能走到这里一定开启了虚拟定位，直接使用 Custom 坐标
-                    val initialLat = Config.getCustomLat(activity)
-                    val initialLng = Config.getCustomLng(activity)
-                    val hasValidLocation = initialLat != 0.0 && initialLng != 0.0
-                    
-                    if (!hasValidLocation) return@thread
-
-                    val info = getInitialDistanceInfo(uidFound, token)
-                    var initialDist = info.dist
-                    var isHidden = info.isHidden
-                    val locationStr = info.location
-
-                    if (initialDist < 0 || initialDist >= 9999.0) {
-                        val cachedInfo = ChatSpyHook.leakedDataCache[uidFound]
-                        if (cachedInfo != null && cachedInfo.distance > 0.001 && cachedInfo.distance != 99999.0) {
-                            initialDist = cachedInfo.distance
-                            isHidden = cachedInfo.hideDist
-                        }
-                    }
-
-                    if (initialDist < 0 || initialDist >= 9999.0) {
-                        trackCache[uidFound] = TrackResult(false, "隐身用户暂无法定位", 0.0, 0.0)
-                        return@thread
-                    }
-
-                    try {
-                        // 【完整保留】原版多段跳跃逼近算法
-                        val result = doMathTrackingSilent(uidFound, token, initialLat, initialLng, initialDist, isHidden)
-                        trackCache[uidFound] = result
-
-                        if (result.success) {
-                            updateMyServerLocation(token, result.lat, result.lng)
-                            val exactLoc = fetchExactMapLocation(uidFound, token, result.lat, result.lng)
-                            if (exactLoc != null) {
-                                result.exactLat = exactLoc.first
-                                result.exactLng = exactLoc.second
-                                trackCache[uidFound] = result.copy(msg = result.msg.replace("正在解算", "解算成功"))
-                            }
-                        }
-                    } catch (t: Throwable) {
-                        trackCache[uidFound] = TrackResult(false, "解算算法异常: ${t.message}", 0.0, 0.0)
-                    } finally {
-                        if (hasValidLocation) {
-                            updateMyServerLocation(token, initialLat, initialLng)
-                        }
+                    // 自动模式: 进入主页即后台静默解算; 手动模式跳过, 等待用户点击「追踪」按钮
+                    if (!isManualMode) {
+                        startTracking(activity, uidFound, false, null)
                     }
                 }
             }
@@ -375,6 +269,168 @@ object TrackHook : BaseHook {
             } catch (e: Throwable) {}
         } catch (e: Exception) {
             e.printStackTrace()
+        }
+    }
+
+    // =========================================================================
+    //  统一解算入口 (自动 / 手动复用)
+    //   - manual=false: 进入主页自动后台解算 (默认, 行为同原版)
+    //   - manual=true : 用户点击「追踪」才解算; onResult 回调用于点击后即时展示结果
+    // =========================================================================
+    private fun startTracking(
+        activity: Activity, uid: String, manual: Boolean, onResult: ((TrackResult) -> Unit)?
+    ) {
+        thread {
+            val token = Config.getAuthToken(activity)
+            if (token.isEmpty()) {
+                onResult?.invoke(TrackResult(false, "未获取到登录凭证", 0.0, 0.0))
+                return@thread
+            }
+            // 自动模式且已有缓存 → 不重复解算 (手动模式允许刷新)
+            if (!manual && trackCache.containsKey(uid)) {
+                onResult?.invoke(trackCache[uid]!!)
+                return@thread
+            }
+
+            // 因为有上方的拦截，能走到这里一定开启了虚拟定位，直接使用 Custom 坐标
+            val initialLat = Config.getCustomLat(activity)
+            val initialLng = Config.getCustomLng(activity)
+            val hasValidLocation = initialLat != 0.0 && initialLng != 0.0
+            if (!hasValidLocation) {
+                val r = TrackResult(false, "未设置虚拟定位坐标", 0.0, 0.0)
+                trackCache[uid] = r
+                onResult?.invoke(r)
+                return@thread
+            }
+
+            val info = getInitialDistanceInfo(uid, token)
+            var initialDist = info.dist
+            var isHidden = info.isHidden
+            val locationStr = info.location
+
+            if (initialDist < 0 || initialDist >= 9999.0) {
+                val cachedInfo = ChatSpyHook.leakedDataCache[uid]
+                if (cachedInfo != null && cachedInfo.distance > 0.001 && cachedInfo.distance != 99999.0) {
+                    initialDist = cachedInfo.distance
+                    isHidden = cachedInfo.hideDist
+                }
+            }
+
+            if (initialDist < 0 || initialDist >= 9999.0) {
+                val r = TrackResult(false, "隐身用户暂无法定位", 0.0, 0.0)
+                trackCache[uid] = r
+                onResult?.invoke(r)
+                return@thread
+            }
+
+            try {
+                // 原版多段跳跃逼近算法
+                val result = doMathTrackingSilent(uid, token, initialLat, initialLng, initialDist, isHidden)
+                trackCache[uid] = result
+
+                if (result.success) {
+                    updateMyServerLocation(token, result.lat, result.lng)
+                    val exactLoc = fetchExactMapLocation(uid, token, result.lat, result.lng)
+                    if (exactLoc != null) {
+                        result.exactLat = exactLoc.first
+                        result.exactLng = exactLoc.second
+                        trackCache[uid] = result.copy(msg = result.msg.replace("正在解算", "解算成功"))
+                    }
+                }
+                onResult?.invoke(trackCache[uid]!!)
+            } catch (t: Throwable) {
+                val r = TrackResult(false, "解算算法异常: ${t.message}", 0.0, 0.0)
+                trackCache[uid] = r
+                onResult?.invoke(r)
+            } finally {
+                if (hasValidLocation) {
+                    updateMyServerLocation(token, initialLat, initialLng)
+                }
+            }
+        }
+    }
+
+    // =========================================================================
+    //  长按空降官方地图 (从原长按逻辑提取, 供自动 / 手动复用)
+    // =========================================================================
+    private fun openTrackMap(activity: Activity, finalLat: Double, finalLng: Double, isExact: Boolean) {
+        // 备份当前坐标, 关闭地图时还原
+        try {
+            val userInfoClass = XposedHelpers.findClassIfExists("com.blued.android.module.common.user.model.UserInfo", activity.classLoader)
+            if (userInfoClass != null) {
+                val loginUser = XposedHelpers.callMethod(XposedHelpers.callStaticMethod(userInfoClass, "getInstance"), "getLoginUserInfo")
+                backupLat = XposedHelpers.getObjectField(loginUser, "lat")?.toString()?.toDoubleOrNull() ?: 0.0
+                backupLng = XposedHelpers.getObjectField(loginUser, "lon")?.toString()?.toDoubleOrNull() ?: 0.0
+            }
+            if (backupLat == 0.0) backupLat = Config.getCustomLat(activity)
+            if (backupLng == 0.0) backupLng = Config.getCustomLng(activity)
+        } catch(e: Throwable){}
+
+        thread {
+            try {
+                val token = Config.getAuthToken(activity)
+                if (token.isNotEmpty()) {
+                    updateMyServerLocation(token, finalLat, finalLng)
+                }
+
+                mainHandler.post {
+                    try {
+                        isTrackingMapOpened = true
+                        val classLoader = activity.classLoader
+
+                        if (isExact) {
+                            Toast.makeText(activity, "定位成功", Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(activity, "正在定位", Toast.LENGTH_SHORT).show()
+                        }
+
+                        val managerClass = XposedHelpers.findClass("com.soft.blued.ui.find.manager.MapFindManager", classLoader)
+                        val beanClass = XposedHelpers.findClass("com.soft.blued.ui.find.manager.MapFindManager\$MapFindBean", classLoader)
+
+                        val beanInstance = beanClass.newInstance()
+
+                        var latInjected = false
+                        var lngInjected = false
+                        for (f in beanClass.declaredFields) {
+                            f.isAccessible = true
+                            val name = f.name.lowercase()
+                            if (f.type == String::class.java) {
+                                if (name == "longitude" || name == "lon" || name == "lng") {
+                                    f.set(beanInstance, finalLng.toString())
+                                    lngInjected = true
+                                } else if (name == "latitude" || name == "lat") {
+                                    f.set(beanInstance, finalLat.toString())
+                                    latInjected = true
+                                }
+                            }
+                        }
+
+                        if (!latInjected || !lngInjected) {
+                            try { XposedHelpers.setObjectField(beanInstance, "a", finalLng.toString()) } catch(e:Throwable){}
+                            try { XposedHelpers.setObjectField(beanInstance, "b", finalLat.toString()) } catch(e:Throwable){}
+                        }
+
+                        try { XposedHelpers.setObjectField(beanInstance, "d", "目标精准坐标") } catch(e:Throwable){}
+                        try { XposedHelpers.setObjectField(beanInstance, "c", 0.0) } catch(e:Throwable){}
+
+                        val managerInstance = XposedHelpers.callStaticMethod(managerClass, "a")
+                        XposedHelpers.callMethod(managerInstance, "a", beanInstance)
+
+                        val terminalActivityClass = XposedHelpers.findClass("com.blued.android.core.ui.TerminalActivity", classLoader)
+                        val mapFragmentClass = XposedHelpers.findClass("com.soft.blued.ui.find.fragment.FindSearchMapFragment", classLoader)
+
+                        val bundle = Bundle().apply {
+                            putInt("from_page", 2)
+                            putInt("find_map_tab", 0)
+                            putBoolean("is_map_find", true)
+                        }
+
+                        XposedHelpers.callStaticMethod(terminalActivityClass, "d", activity, mapFragmentClass, bundle)
+                    } catch (e: Exception) {
+                        Toast.makeText(activity, "调用官方地图失败: ${e.message}", Toast.LENGTH_LONG).show()
+                    }
+                }
+            } catch (e: Exception) {}
         }
     }
 

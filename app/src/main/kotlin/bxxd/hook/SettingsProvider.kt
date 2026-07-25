@@ -14,9 +14,15 @@ class SettingsProvider : ContentProvider() {
     override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): Cursor? {
         // 使用 MODE_PRIVATE，跨进程读取通过文件权限提权保证
         val prefs = context?.getSharedPreferences("llhook_settings", Context.MODE_PRIVATE) ?: return null
+        // ★ 全量拉取: content://com.app.hook.settings/all
+        //   返回两列 (key, value), 供 Blued 进程在打开时一次性同步最新配置 (修复本地缓存过期)。
+        if (uri.lastPathSegment == "all") {
+            val cursorAll = MatrixCursor(arrayOf("key", "value"))
+            prefs.all.forEach { (k, v) -> cursorAll.addRow(arrayOf(k, v?.toString() ?: "")) }
+            return cursorAll
+        }
         val key = uri.lastPathSegment ?: return null
         val cursor = MatrixCursor(arrayOf("value"))
-        
         val value = prefs.all[key]
         cursor.addRow(arrayOf(value?.toString() ?: ""))
         return cursor

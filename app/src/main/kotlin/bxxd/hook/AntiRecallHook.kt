@@ -1,6 +1,7 @@
 package bxxd.hook
 
 import android.app.AndroidAppHelper
+import android.content.Context
 import android.graphics.Color
 import android.os.Handler
 import android.os.Looper
@@ -25,8 +26,11 @@ object AntiRecallHook : BaseHook {
         
         // 2. 🚀 闪照完美破解 (纯净解密版)
         hookFlashPhotoBypass(lpparam)
-        
-        // 3. UI 提示文字注入 (支持闪照提示 + 防撤回永久提示)
+
+        // 3. 闪照激励视频免广告 (看视频得闪照 → 直接发放奖励, 跳过广告)
+        hookFlashRewardAdSkip(lpparam)
+
+        // 4. UI 提示文字注入 (支持闪照提示 + 防撤回永久提示)
         hookChattingUI(lpparam)
     }
 
@@ -168,23 +172,66 @@ object AntiRecallHook : BaseHook {
                     }
                 }
 
-            val flashNumberModelClass = lpparam.classLoader.loadClass("com.soft.blued.ui.msg.model.FlashNumberModel")
-            val flashPhotoManagerClass = lpparam.classLoader.loadClass("com.soft.blued.ui.msg.manager.FlashPhotoManager")
+        } catch (e: Throwable) { e.printStackTrace() }
+    }
 
-            flashPhotoManagerClass.declaredMethods.filter { 
-                it.returnType == flashNumberModelClass 
-            }.forEach { method ->
-                method.hookAfter { param ->
-                    if (!Config.isFeatureEnabled("switch_flash_photo")) return@hookAfter
-                    
-                    val result = param.result ?: return@hookAfter
+    // =====================================
+    // 闪照激励视频免广告
+    //   原理: Blued 在闪照次数用尽后会弹出「看视频获得一次机会」面板,
+    //        点击后启动激励视频 (TT/TX/TopOn/快手 SDK), 看完才发放奖励。
+    //        但奖励发放是纯客户端控制的 —— BaseADVideoFragment.f() 在视频
+    //        播放完成后调用 FlashPhotoManager.a(true, listener) →
+    //        ChatHttpUtils.b() 向服务端请求 +1 闪照, 服务端无视频校验。
+    //   做法: Hook 激励视频启动器 BaseADVideoFragment.a(ctx, adExtra, AD_FROM, listener),
+    //        当 AD_FROM == 2 (闪照) 时, 跳过整个广告视频 Activity, 直接调用
+    //        FlashPhotoManager.b().a(true, listener) 发放奖励。
+    //        用户点「看视频获得一次机会」后立即得到闪照, 无需看广告。
+    // =====================================
+    private fun hookFlashRewardAdSkip(lpparam: XC_LoadPackage.LoadPackageParam) {
+        try {
+            val baseAdVideoClass = lpparam.classLoader.loadClass("com.soft.blued.ui.welcome.BaseADVideoFragment")
+            val adExtraClass = lpparam.classLoader.loadClass("com.blued.android.module.common.login.model.BluedADExtra")
+            val onVideoSuccessListenerClass = lpparam.classLoader.loadClass("com.blued.community.ui.send.dialog.PayVIPPopupWindow\$OnVideoSuccessListener")
+            val managerClass = lpparam.classLoader.loadClass("com.soft.blued.ui.msg.manager.FlashPhotoManager")
+            val flashSuccessListenerInterface = lpparam.classLoader.loadClass("com.soft.blued.ui.msg.manager.FlashPhotoManager\$FlashPhotoModelSuccessListener")
+
+            // 静态启动器: a(Context, BluedADExtra, int /*AD_FROM*/, OnVideoSuccessListener)
+            //   AD_FROM == 2 表示闪照激励视频 (见 BaseADVideoFragment.f() 中 c==2 分支)
+            //   3 参数重载会委托到这个 4 参数版本, 故只 hook 这里即可覆盖。
+            baseAdVideoClass.findMethod {
+                name == "a" && parameterTypes.size == 4 &&
+                parameterTypes[0] == Context::class.java &&
+                parameterTypes[1] == adExtraClass &&
+                parameterTypes[2] == Int::class.javaPrimitiveType &&
+                parameterTypes[3] == onVideoSuccessListenerClass
+            }.hookBefore { param ->
+                if (!Config.isFeatureEnabled("switch_flash_ad_skip")) return@hookBefore
+
+                val adFrom = param.args[2] as Int
+                if (adFrom != 2) return@hookBefore  // 仅拦截闪照(AD_FROM==2)
+
+                try {
+                    // 空实现的成功回调 (避免网络失败分支 NPE)
+                    val noOpListener = java.lang.reflect.Proxy.newProxyInstance(
+                        lpparam.classLoader, arrayOf(flashSuccessListenerInterface)
+                    ) { _, _, _ -> }
+
+                    // 直接走「视频已看完」的发奖路径: FlashPhotoManager.b().a(true, listener)
+                    //   true → ChatHttpUtils.b() 请求服务端 +1 闪照
+                    val manager = XposedHelpers.callStaticMethod(managerClass, "b")
+                    val grantMethod = managerClass.getMethod("a", java.lang.Boolean.TYPE, flashSuccessListenerInterface)
+                    grantMethod.invoke(manager, true, noOpListener)
+
+                    // 提示用户 (App 自身会在发奖成功后弹「已成功解锁 1 张闪照」)
                     try {
-                        XposedHelpers.setObjectField(result, "flash_left_times", 99)
-                        XposedHelpers.setObjectField(result, "stimulate_flash", 0)
-                        XposedHelpers.setObjectField(result, "is_vip", 1)
-                        XposedHelpers.setObjectField(result, "flash_prompt", "")
-                    } catch (ex: Throwable) {}
-                }
+                        val ctx = param.args[0] as? Context
+                        Handler(Looper.getMainLooper()).post {
+                            Toast.makeText(ctx, "⚡ 已跳过广告，正在发放闪照奖励", Toast.LENGTH_SHORT).show()
+                        }
+                    } catch (_: Throwable) {}
+
+                    param.result = null  // 拦截原方法: 不再启动广告视频 Activity
+                } catch (e: Throwable) { e.printStackTrace() }
             }
         } catch (e: Throwable) { e.printStackTrace() }
     }

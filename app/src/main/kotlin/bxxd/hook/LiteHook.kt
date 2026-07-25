@@ -53,6 +53,17 @@ object LiteHook : BaseHook {
         "YTCommonLiveness"        // 活体检测公共库
     )
 
+    // ==========================================
+    // 激励视频广告 SDK (闪照「看视频获得一次机会」所用)
+    //  开启「闪照免看广告」时不拦截这些 SDK 的初始化, 让面板可用。
+    // ==========================================
+    private val REWARD_SDK_CLASSES = setOf(
+        "com.bytedance.sdk.openadsdk.TTAdSdk",       // 穿山甲 (adms_type=4)
+        "com.qq.e.comm.managers.GDTADManager",       // 优量汇 (adms_type=3)
+        "com.anythink.core.api.ATSDK",               // TopOn/AnyThink (adms_type=6)
+        "com.kwad.sdk.api.KsAdSDK"                   // 快手 (adms_type=13)
+    )
+
     /** 已记录过拦截日志的库名 (去重, 避免高频拦截时磁盘 I/O 拖慢) */
     private val loggedSo = java.util.Collections.newSetFromMap(
         java.util.concurrent.ConcurrentHashMap<String, Boolean>()
@@ -71,7 +82,12 @@ object LiteHook : BaseHook {
             return
         }
         XposedBridge.log("[$TAG] switch_lite ON → applying lite hooks")
-        hookAdsInit(lpparam)
+        // 闪照免看广告开启时, 保留激励视频 SDK 初始化 (放行, 不杀),
+        // 让「看视频获得一次机会」面板可正常拉取广告配置 (配合 AntiRecallHook 跳广告发奖)。
+        // ★ 同 switch_lite 一样在 init 读一次, 改开关后需【重启 Blued】生效。
+        val keepRewardSdk = try { Config.isFeatureEnabled("switch_flash_ad_skip") } catch (_: Throwable) { false }
+        XposedBridge.log("[$TAG] switch_lite ON → applying lite hooks (keepRewardSdk=$keepRewardSdk)")
+        hookAdsInit(lpparam, keepRewardSdk)
         hookHeavySo()
     }
 
@@ -79,8 +95,10 @@ object LiteHook : BaseHook {
     // 广告 SDK 初始化拦截: init* / onCreate / start 空转
     //   (开关已确认 ON, hookBefore 内不再读配置, 直接执行)
     // ----------------------------------------------------------------
-    private fun hookAdsInit(lpparam: XC_LoadPackage.LoadPackageParam) {
+    private fun hookAdsInit(lpparam: XC_LoadPackage.LoadPackageParam, keepRewardSdk: Boolean) {
         for (className in AD_SDK_INIT_CLASSES) {
+            // 闪照免看广告: 保留激励视频 SDK (穿山甲/优量汇/TopOn/快手), 让其正常初始化
+            if (keepRewardSdk && className in REWARD_SDK_CLASSES) continue
             try {
                 val clz = XposedHelpers.findClass(className, lpparam.classLoader)
                 for (m in clz.declaredMethods) {

@@ -170,6 +170,30 @@ object ChatSpyHook : BaseHook {
                         true
                     }
                 }
+
+                // 礼物按钮长按 → 标记此用户为风险/注销 (Compose 毛玻璃面板)
+                if (Config.isFeatureEnabled("switch_deleted_mark")) {
+                val btGiftId = activity.resources.getIdentifier("bt_gift", "id", activity.packageName)
+                if (btGiftId != 0) {
+                    val btGift = rootLayout.findViewById<View>(btGiftId)
+                    btGift?.setOnLongClickListener {
+                        val (targetUid, targetName) = extractUidAndName(fragmentInstance)
+                        if (targetUid.isNotEmpty() && targetUid != "0") {
+                            val dispName = if (targetName.isNotEmpty() && targetName != "未命名") targetName else targetUid
+                            try {
+                                com.example.ui.showHostComposeScreen(activity) { onClose ->
+                                    com.example.ui.MarkUserPanel(onClose, targetUid, dispName)
+                                }
+                            } catch (_: Throwable) {
+                                Toast.makeText(activity, "面板唤起失败", Toast.LENGTH_SHORT).show()
+                            }
+                        } else {
+                            Toast.makeText(activity, "未能获取该用户 UID", Toast.LENGTH_SHORT).show()
+                        }
+                        true
+                    }
+                }
+                } // end switch_deleted_mark gate
             }
         } catch (e: Throwable) {}
     }
@@ -259,6 +283,79 @@ object ChatSpyHook : BaseHook {
         if (!userDir.exists()) userDir.mkdirs()
         try { File(userDir, ".nomedia").createNewFile() } catch (e: Throwable) {}
         return userDir
+    }
+
+    /** 文件名安全的昵称 (与 SecretAlbumScreen 同一套规则)。 */
+    fun safeName(name: String): String = name.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+
+    /**
+     * 把缩略图直链转为原图直链。
+     *
+     * Blued CDN (bldimg.com) 用后缀语法控制尺寸: 缩略图 `!Head.jpg`, 原图 `!Head.jpg!original.png`。
+     * 不加后缀拉到的就是模糊缩略图。
+     *
+     * 规则:
+     *  - 已含 `!original.png` / `!original.jpg` → 不动 (避免重复)
+     *  - 否则末尾追加 `!original.png`
+     *  - 去掉查询串 (? 后内容), 后缀必须紧跟路径末尾才被 CDN 识别
+     */
+    fun toOriginalUrl(url: String): String {
+        if (url.isEmpty()) return url
+        val lower = url.lowercase()
+        if (lower.endsWith("!original.png") || lower.endsWith("!original.jpg")) return url
+        // 去掉查询参数 (?xxx) 与结尾可能的 &
+        val path = url.substringBefore("?")
+        return "$path!original.png"
+    }
+
+    /**
+     * 阶段 3: 由「附近列表查看私密相册」面板调用——把一整批图片直链下载入库。
+     * 存储位置同闪照自动入库 (Pictures/.llhook_blued 下按 uid_昵称 建目录)。
+     *
+     * @param uid   目标 uid
+     * @param name  目标昵称 (保留原始昵称, 仅文件名做安全转义)
+     * @param urls  图片直链列表
+     * @param onProgress (已下载数, 总数) 每张完成回调 (主线程)
+     * @param onDone (成功下载数) 全部完成回调 (主线程)
+     */
+    fun saveAlbumFromUrls(
+        activity: Activity,
+        uid: String,
+        name: String,
+        urls: List<String>,
+        onProgress: (Int, Int) -> Unit,
+        onDone: (Int) -> Unit
+    ) {
+        val dir = findUserDir(uid, safeName(if (name.isBlank()) uid else name))
+        Thread {
+            var saved = 0
+            urls.forEachIndexed { i, raw ->
+                try {
+                    // ★ 转原图: 接口返回的是缩略图直链, 加 !original.png 后缀拉原图 (不拉模糊缩略图)
+                    val originalUrl = toOriginalUrl(raw)
+                    val conn = (URL(originalUrl).openConnection() as HttpURLConnection).apply {
+                        requestMethod = "GET"
+                        connectTimeout = 10000; readTimeout = 15000
+                        setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 13)")
+                    }
+                    val bytes = conn.inputStream.use { it.readBytes() }
+                    conn.disconnect()
+                    if (bytes.isNotEmpty()) {
+                        // 文件名用原始 url 的最后一段 (含 !original.png), 保留后缀信息
+                        val namePart = raw.substringAfterLast("/", "").substringBefore("?")
+                        val ext = namePart.substringAfterLast(".", "").lowercase()
+                        val safeExt = if (ext.length in 2..4 && ext.matches(Regex("[a-z0-9]+"))) "." + ext else ".jpg"
+                        val file = File(dir, "${System.currentTimeMillis()}_${i}${safeExt}")
+                        file.writeBytes(bytes)
+                        saved++
+                    }
+                } catch (_: Throwable) {}
+                val p = i + 1
+                activity.runOnUiThread { onProgress(p, urls.size) }
+            }
+            val total = saved
+            activity.runOnUiThread { onDone(total) }
+        }.start()
     }
 
     private fun dp2px(activity: Activity, dp: Float): Int = (dp * activity.resources.displayMetrics.density + 0.5f).toInt()

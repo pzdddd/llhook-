@@ -37,9 +37,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import bxxd.hook.ChatBackupManager
 import bxxd.hook.Config
+import bxxd.hook.SyncHistoryHook
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.concurrent.thread
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -138,7 +140,23 @@ fun ChatBackupScreen(activity: Activity, onClose: () -> Unit) {
                 ) {
                     Icon(Icons.Filled.CloudUpload, null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("立即备份", color = Color.White, fontWeight = FontWeight.SemiBold)
+                    Text("备份", color = Color.White, fontWeight = FontWeight.SemiBold)
+                }
+                Button(
+                    onClick = {
+                        if (!busy) {
+                            Toast.makeText(ctx, "正在提交全量同步请求…", Toast.LENGTH_SHORT).show()
+                            thread { SyncHistoryHook.triggerSync(activity) }
+                        }
+                    },
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF5856D6)),
+                    enabled = !busy,
+                    modifier = Modifier.weight(1f).height(50.dp)
+                ) {
+                    Icon(Icons.Filled.Sync, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("同步", color = Color.White, fontWeight = FontWeight.SemiBold)
                 }
                 OutlinedButton(
                     onClick = { showDirDialog = true },
@@ -177,7 +195,7 @@ fun ChatBackupScreen(activity: Activity, onClose: () -> Unit) {
                         Spacer(Modifier.height(12.dp))
                         Text("暂无备份", color = colors.text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
                         Spacer(Modifier.height(6.dp))
-                        Text("点击「立即备份」打包当前聊天数据库\n(WAL 三件套 + 登录账号元信息)",
+                        Text("点击「备份」打包当前聊天数据库\n(WAL 三件套 + 登录账号元信息)",
                             color = colors.subText, fontSize = 12.sp, textAlign = TextAlign.Center, lineHeight = 16.sp)
                     }
                 }

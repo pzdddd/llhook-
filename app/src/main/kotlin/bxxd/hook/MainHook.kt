@@ -29,6 +29,13 @@ class MainHook : IXposedHookLoadPackage {
         
         // 🚀 激活自检逻辑 (模块自身进程: 让界面知道模块已激活)
         if (lpparam.packageName == Config.PACKAGE_NAME) {
+            // 模块自身进程被 LSPosed 加载 = 已激活, 翻转 MainActivity 静态标志供 Compose 界面读取
+            try {
+                XposedHelpers.callStaticMethod(
+                    XposedHelpers.findClass("com.example.MainActivity", lpparam.classLoader),
+                    "markActivated"
+                )
+            } catch (_: Throwable) {}
             try {
                 XposedHelpers.findAndHookMethod(
                     "com.example.MainActivity",
@@ -155,7 +162,7 @@ class MainHook : IXposedHookLoadPackage {
 
             // 依次唤醒所有子模块
             FloatingUI.init(lpparam)      // 注入悬浮窗UI
-            AdsHook.init(lpparam)         // 注入去广告逻辑
+            AdsHook.init(lpparam)         // 屏蔽控件 id 类: 按 View ID 净化 UI (开屏/信息流/横幅/我的页/设置页等)
             AntiRecallHook.init(lpparam)  // 注入防撤回逻辑
             VipHook.init(lpparam)         // 注入本地vip
             PrivatePhotoHook.init(lpparam)// 隐私相册
@@ -166,7 +173,7 @@ class MainHook : IXposedHookLoadPackage {
             TokenHook.init(lpparam)       // tk获取
             ChatSpyHook.init(lpparam)     // 用户信息
             LiveBlockHook.init(lpparam)   // 直播拦截
-            AdBlockHook.init(lpparam)     // 广告拦截
+            AdBlockHook.init(lpparam)     // 屏蔽广告类: 网络层拦截广告/追踪/呼叫请求 (OkHttp+DNS+URL)
             DeviceSpoofHook.init(lpparam) //数美拦截(置空/伪造 SMID, 默认关, 不安全)
             RiskEnvHook.init(lpparam)     //数美/风控环境加固(安全路线: 隐藏 root/hook 痕迹, 强烈推荐常开)
             //SettingsEntryHook.init(lpparam)//已移除: 模块入口改在「我的」页面田字里, 不再在 Blued 设置页注入
@@ -177,6 +184,13 @@ class MainHook : IXposedHookLoadPackage {
             Ban2Hook.init(lpparam)        // 防删聊天与风险提示拦截
             NetworkSpoofHook.init(lpparam) // 极速版网络请求头伪装
             NearbyRoleHook.init(lpparam)   // 附近列表角色 UI 注入 (显示数据)
+            NearbySortHook.init(lpparam)   // 附近排序栏: 右移+加粗+筛选按钮 (客户端筛选 角色/VIP/相册/真人)
+            NearbyChatHook.init(lpparam)   // 附近列表一键聊天: 距离左移 + 右侧💬按钮直达聊天
+            NearbyCardHook.init(lpparam)    // 附近列表卡片化: fl_main 圆角背景 + 自定义颜色/渐变
+            NearbyPageBgHook.init(lpparam)  // 身边页背景: recycler_view 整页背景 颜色/渐变/图片
+            MsgCardHook.init(lpparam)        // 消息列表卡片化: ll_msg_f_root 圆角背景 + 自定义颜色/渐变
+            MsgPageBgHook.init(lpparam)       // 消息页背景: 整页背景 颜色/渐变/图片
+            MainNavHook.init(lpparam)        // 底部导航栏: 圆角 + 悬浮 (main_navigation)
             ChatWatermarkHook.init(lpparam)
             ForcePushHook.init(lpparam)         // 强制消息推送(解决手机收不到 Blued 推送)
             KeepAliveHook.init(lpparam)         // Blued 进程保活心跳(让实时推送持续生效)

@@ -29,6 +29,17 @@ object ChatWatermarkHook : BaseHook {
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    // 获取当前的开关状态（动态读取，无需重启软件即可生效）
+    private fun isChatWatermarkEnabled(): Boolean {
+        return try {
+            val ctx = XposedHelpers.callStaticMethod(
+                XposedHelpers.findClass("android.app.ActivityThread", null),
+                "currentApplication"
+            ) as? android.content.Context
+            if (ctx != null) Config.isFeatureEnabled("switch_chat_watermark", ctx) else false
+        } catch (e: Throwable) { false }
+    }
+
     // ================= 核心：数据寄存器 (内存缓存) =================
     // 随 App 进程生灭，退出杀后台自动销毁。只保存被隐藏的用户真实数据。
     data class UserLeakedInfo(val distance: Double, val lastOperate: Long)
@@ -39,6 +50,9 @@ object ChatWatermarkHook : BaseHook {
         // 1. 全局拦截 Gson 解析，充当雷达将隐身用户的真实数据截获进寄存器
         val gsonHook = object : XC_MethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam) {
+                // 开关关闭时完全不收集, Gson 拦截零开销放行
+                if (!isChatWatermarkEnabled()) return
+
                 val jsonStr = param.args[0] as? String ?: return
                 
                 // 【极速过滤】：只处理大厅列表等包含隐身用户的 JSON，屏蔽其余 99% 的无关请求，零性能损耗
@@ -91,6 +105,9 @@ object ChatWatermarkHook : BaseHook {
             val chatFragmentClass = lpparam.classLoader.loadClass(Config.TargetClasses.MSG_CHATTING_FRAGMENT)
 
             chatFragmentClass.findMethod { name == "onResume" }.hookAfter { param ->
+                // 开关关闭时不注入任何水印 View
+                if (!isChatWatermarkEnabled()) return@hookAfter
+
                 val fragmentInstance = param.thisObject
                 val activity = XposedHelpers.callMethod(fragmentInstance, "getActivity") as? Activity ?: return@hookAfter
 

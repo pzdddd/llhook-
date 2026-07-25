@@ -9,6 +9,7 @@ import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.Outline
 import android.animation.ValueAnimator
@@ -32,6 +33,8 @@ import android.widget.Toast
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
 import de.robv.android.xposed.callbacks.XC_LoadPackage
+import org.json.JSONObject
+import java.net.HttpURLConnection
 
 /**
  * ============================================================================
@@ -62,6 +65,10 @@ object HomeQQHook : BaseHook {
 
     private const val TAG = "llhook_qq_avatar"
     private const val TAG_TITLE = "llhook_title_adjusted"
+    /** 头像右侧坐标/位置名称容器 Tag (注入到独立控件, 长名称可换行显示全) */
+    private const val TAG_LOCATION_INFO = "llhook_qq_location_info"
+    private const val TAG_COORD = "llhook_qq_coord"
+    private const val TAG_NAME = "llhook_qq_name"
     private val mainHandler = Handler(Looper.getMainLooper())
 
     // 抽屉状态
@@ -154,14 +161,21 @@ object HomeQQHook : BaseHook {
                 }
             })
 
-            // ④ 各 Tab Fragment.onResume — 顶部标题栏 (TitleTopNavigationView) 下移避让头像
-            //    身边页 NearbyHomeFragment / 消息页 MessagePageFragment / 动态 DiscoveryPageFragment
-            val titleFragments = listOf(
+            // ④ 各 Tab Fragment 顶部标题栏 (TitleTopNavigationView / mTitle) 下移避让头像
+            //    ⚠️ 关键教训 (上一版发现页一直"没变化"的根因):
+            //      hookAllMethods(fc, "onResume") 只会 hook 该类「自己声明」的方法。
+            //      NearbyHomeFragment / MessagePageFragment / LiveFragment 都重写了 onResume ✓ 能 hook 到。
+            //      但 DiscoveryPageFragment 没有重写 onResume (它只声明 onInitView / a() / b() 等),
+            //      所以 hookAllMethods("onResume") 对发现页静默返回 0 个 hook → adjustTitleBar 从未执行
+            //      → 发现页标题栏一直被头像/坐标挡住 (表现为"跟没改一样")。
+            //      修复: 发现页单独 hook 它确实声明的 onInitView (view 创建后, navigationView 已 @BindView 绑定)。
+            //      onCacheView()=true → view 仅创建一次, translationY 设一次后持久, 切 tab 不会丢。
+            val onResumeFrags = listOf(
                 "com.soft.blued.ui.find.fragment.NearbyHomeFragment",
                 "com.soft.blued.ui.msg.MessagePageFragment",
-                "com.soft.blued.ui.feed.DiscoveryPageFragment"
+                "com.soft.blued.ui.live.fragment.LiveFragment"
             )
-            for (fragName in titleFragments) {
+            for (fragName in onResumeFrags) {
                 try {
                     val fc = lpparam.classLoader.loadClass(fragName)
                     XposedBridge.hookAllMethods(fc, "onResume", object : de.robv.android.xposed.XC_MethodHook() {
@@ -170,11 +184,29 @@ object HomeQQHook : BaseHook {
                                 val activity = hostActivity ?: return
                                 if (!Config.isFeatureEnabled("switch_qq_home", activity)) return
                                 mainHandler.postDelayed({ adjustTitleBar(param.thisObject) }, 100)
+                                // 保险: 首次进入时 scrollView(tab 内容)可能较晚填充, 400ms 再补一次
+                                mainHandler.postDelayed({ adjustTitleBar(param.thisObject) }, 400)
                             } catch (e: Throwable) {}
                         }
                     })
                 } catch (e: Throwable) {}
             }
+            // —— 发现页单独 hook onInitView (它不重写 onResume, onResume 路径抓不到) ——
+            try {
+                val dfc = lpparam.classLoader.loadClass("com.soft.blued.ui.discover.fragment.DiscoveryPageFragment")
+                XposedBridge.hookAllMethods(dfc, "onInitView", object : de.robv.android.xposed.XC_MethodHook() {
+                    override fun afterHookedMethod(param: MethodHookParam) {
+                        try {
+                            val activity = hostActivity ?: return
+                            if (!Config.isFeatureEnabled("switch_qq_home", activity)) return
+                            // onInitView 时 view 刚创建尚未布局, 多档延迟确保布局完成后再下移
+                            mainHandler.postDelayed({ adjustTitleBar(param.thisObject) }, 100)
+                            mainHandler.postDelayed({ adjustTitleBar(param.thisObject) }, 400)
+                            mainHandler.postDelayed({ adjustTitleBar(param.thisObject) }, 800)
+                        } catch (e: Throwable) {}
+                    }
+                })
+            } catch (e: Throwable) { XposedBridge.log("llhook qq discover hook err: $e") }
 
             // ⑤ MineNewFragment.onResume — 「我互动过/来访/群聊/动态」改成 2×2 田字布局, 按钮增大下移
             //    (只在 QQ 风格首页开启时生效)
@@ -212,18 +244,15 @@ object HomeQQHook : BaseHook {
         val marginTop = statusBarHeight + dp2px(activity, 0f)
         touchSlop = ViewConfiguration.get(activity).scaledTouchSlop.coerceAtLeast(16)
 
+        // —— 头像外框 (圆形白边) ——
         val avatarFrame = FrameLayout(activity).apply {
-            tag = TAG
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
                 setColor(Color.WHITE)
                 setStroke(pad2, Color.WHITE)
             }
             setPadding(pad2, pad2, pad2, pad2)
-            layoutParams = FrameLayout.LayoutParams(avatarSize, avatarSize).apply {
-                gravity = Gravity.TOP or Gravity.START
-                setMargins(marginStart, marginTop, 0, 0)
-            }
+            layoutParams = LinearLayout.LayoutParams(avatarSize, avatarSize)
         }
         val avatarView = ImageView(activity).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
@@ -243,8 +272,74 @@ object HomeQQHook : BaseHook {
         }
         avatarFrame.addView(avatarView)
         avatarFrame.setOnClickListener { showMineDrawer() }
-        rootView.addView(avatarFrame)
+
+        // —— 坐标 + 真实位置名称 文本块 (注入独立控件, 长名称可换行显示全) ——
+        // 与头像上下对齐: headerRow 用 center_vertical, 文本块垂直居中于头像。
+        val isDark = isDarkMode(activity)
+        val coordColor = if (isDark) Color.parseColor("#F1F5F9") else Color.parseColor("#1F2937")
+        val nameColor = if (isDark) Color.parseColor("#CBD5E1") else Color.parseColor("#475569")
+        val coordText = TextView(activity).apply {
+            tag = TAG_COORD
+            text = "📍 解析中…"
+            setTextColor(coordColor)
+            textSize = 11f
+            setTypeface(typeface, Typeface.BOLD)
+            maxLines = 1
+            includeFontPadding = false
+            setPadding(0, 0, 0, dp2px(activity, 1f))
+        }
+        val nameText = TextView(activity).apply {
+            tag = TAG_NAME
+            text = "正在解析位置…"
+            setTextColor(nameColor)
+            textSize = 11f
+            maxLines = 2          // 长名称换行, 显示全
+            includeFontPadding = false
+        }
+        val textBlock = LinearLayout(activity).apply {
+            tag = TAG_LOCATION_INFO
+            orientation = LinearLayout.VERTICAL
+            // ★ 坐标容器加边框: 圆角描边背景, 像一个 chip, 不被页面内容遮挡
+            background = locationChipBg(activity)
+            setPadding(dp2px(activity, 8f), dp2px(activity, 4f), dp2px(activity, 6f), dp2px(activity, 4f))
+            layoutParams = LinearLayout.LayoutParams(
+                dp2px(activity, 188f),   // 限宽避免横跨全屏与右上角元素重叠, 名称超长换行
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+        textBlock.addView(coordText)
+        textBlock.addView(nameText)
+
+        // —— 头部行: 头像 + 文本块, 水平排列, 垂直居中对齐 ——
+        val headerRow = LinearLayout(activity).apply {
+            tag = TAG
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                setMargins(marginStart, marginTop, 0, 0)
+            }
+        }
+        headerRow.addView(avatarFrame)
+        rootView.addView(headerRow)
+
         loadAvatarAsync(activity, avatarView)
+
+        // —— 坐标显示受 switch_qq_coord 控制; 点击坐标跳转虚拟定位地图选点 ——
+        if (Config.isFeatureEnabled("switch_qq_coord", activity)) {
+            headerRow.addView(textBlock)
+            loadLocationInfoAsync(activity, textBlock)
+            textBlock.setOnClickListener {
+                try {
+                    MapOverlay.showMap(activity)
+                } catch (e: Throwable) {
+                    Toast.makeText(activity, "地图唤起失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
     }
 
     private fun loadAvatarAsync(activity: Activity, imageView: ImageView) {
@@ -265,6 +360,71 @@ object HomeQQHook : BaseHook {
                 }
             } catch (e: Throwable) {}
         }.start()
+    }
+
+    // ========================================================================
+    //  坐标 + 真实位置名称 (头像右侧)
+    //   - 坐标: 当前配置的虚拟定位坐标 (Config.getCustomLat/Lng)
+    //   - 名称: 高德逆地理编码 REST API, 把坐标反解为真实地名 (formatted_address)
+    //   - 长名称: nameText maxLines=2 自动换行, 在 188dp 限宽内显示全
+    // ========================================================================
+    private fun loadLocationInfoAsync(activity: Activity, textBlock: LinearLayout) {
+        Thread {
+            try {
+                val lat = Config.getCustomLat(activity)
+                val lng = Config.getCustomLng(activity)
+                val coordStr = "📍 " +
+                    String.format(java.util.Locale.US, "%.4f", lat) + ", " +
+                    String.format(java.util.Locale.US, "%.4f", lng)
+                mainHandler.post {
+                    try {
+                        if (!activity.isFinishing) {
+                            (textBlock.findViewWithTag<View>(TAG_COORD) as? TextView)?.text = coordStr
+                        }
+                    } catch (e: Throwable) {}
+                }
+
+                val name = reverseGeocode(activity, lat, lng)
+                mainHandler.post {
+                    try {
+                        if (!activity.isFinishing) {
+                            (textBlock.findViewWithTag<View>(TAG_NAME) as? TextView)?.text = name
+                        }
+                    } catch (e: Throwable) {}
+                }
+            } catch (e: Throwable) {}
+        }.start()
+    }
+
+    /** 高德逆地理编码: 坐标 → 真实地名 (formatted_address)。无 API Key 时给出提示。 */
+    private fun reverseGeocode(activity: Activity, lat: Double, lng: Double): String {
+        val key = Config.getApiKey(activity)
+        if (key.isBlank()) return "未配置高德 API Key"
+        return try {
+            // 高德坐标为 GCJ-02, 自定义坐标默认即 GCJ-02 (地图选点用高德), 可直接查询
+            val urlStr =
+                "https://restapi.amap.com/v3/geocode/regeo?location=" +
+                "${lng},${lat}&key=${key}&output=JSON&extensions=base"
+            val conn = java.net.URL(urlStr).openConnection() as HttpURLConnection
+            conn.connectTimeout = 5000
+            conn.readTimeout = 5000
+            conn.requestMethod = "GET"
+            conn.setRequestProperty("user-agent", "Mozilla/5.0")
+            if (conn.responseCode == 200) {
+                val resp = conn.inputStream.bufferedReader().use { it.readText() }
+                val json = JSONObject(resp)
+                if (json.optString("status") == "1") {
+                    val regeo = json.optJSONObject("regeocode")
+                    val addr = regeo?.optString("formatted_address") ?: ""
+                    if (addr.isNotEmpty()) return addr
+                }
+                val info = json.optString("info")
+                return if (info.isNotEmpty()) "解析失败: $info" else "解析失败"
+            }
+            "解析失败 (${conn.responseCode})"
+        } catch (e: Throwable) {
+            "解析失败: ${e.message}"
+        }
     }
 
     private fun downloadBitmap(urlStr: String): Bitmap? {
@@ -657,6 +817,19 @@ object HomeQQHook : BaseHook {
         }
     }
 
+    /** 左上角坐标容器背景: 半透明圆角描边 chip
+     *  - 半透明填充: 浅色模式白 0xCC, 深色模式黑 0x99 → 叠在任意页面内容上都能看清
+     *  - 1dp 描边 + 10dp 圆角, 与坐标文字 (11sp) 比例协调
+     */
+    private fun locationChipBg(ctx: Context): GradientDrawable {
+        val isDark = isDarkMode(ctx)
+        return GradientDrawable().apply {
+            setColor(Color.parseColor(if (isDark) "#99000000" else "#CCFFFFFF"))
+            cornerRadius = dp2px(ctx, 10f).toFloat()
+            setStroke(dp2px(ctx, 1f), Color.parseColor(if (isDark) "#5B6471" else "#9AA3B2"))
+        }
+    }
+
 
 
     /** 造一行 (两个按钮各占一半宽度, weight=1; b 为 null 时右格留空占位) */
@@ -751,30 +924,48 @@ object HomeQQHook : BaseHook {
     //  各页面顶部标题栏 下移避让头像
     // ========================================================================
     /**
-     * 通用: 找 fragment 根视图里的标题栏根容器并下移 offset。
+     * 各页面顶部标题栏下移避让左上角头像/坐标。
      *
-     *  ⚠️ 关键教训 (勿重复犯错):
-     *   - 只能下移「标题栏根容器」一个对象, 不能同时下移它内部的 TitleTopNavigationView
-     *     (两者是嵌套关系, 同时下移 = 双重位移, 标题栏会移出可见区/被列表覆盖)
-     *   - 必须给标题栏 elevation 提高到列表之上, 否则下移后被 ViewPager 列表覆盖
-     *   - 用 translationY 不改布局, 配合 elevation 保证可见
+     *  目标控件: 统一下移各页 fragment 里的 `id/title` 容器 (它是真正的「标题栏根」),
+     *  把它整体 translationY 下移, 内部的 tab/指示器/菜单会作为一组跟着移动:
+     *   - 直播页 title(mTitle LinearLayout) 内含 fl_title_bar_root(指示器) + ctt_right_menu(右菜单)
+     *   - 发现页 title(TitleTopNavigationView) 内含 rootView → scrollView(「关注/推荐」横向 tab 条)
+     *   - 身边页/消息页 title(TitleTopNavigationView / TitleBar)
+     *
+     *  ⚠️ 关键教训 (上一版踩的坑, 勿重复犯错):
+     *   - 不要去单独下移 fl_title_bar_root / rootView 这类「子控件」!
+     *     它们的父(title / TitleTopNavigationView)默认 clipChildren=true 会把子裁掉; 而且子控件下移
+     *     进入内容区后会被 ViewPager 盖住(子控件的 elevation 无法越过未抬升父的 Z 平面)。
+     *     上一版直播页把 fl_title_bar_root 下移 → vp_indicator(附近/推荐/关注) 整个消失就是这个原因。
+     *     正解: 下移 title 容器本身, 让 fl_title_bar_root/rootView/scrollView 作为子跟着走。
+     *   - 下移量必须按「实测 headerRow 高度」算, 不能写死 44/58dp:
+     *     switch_qq_coord 开启时头像右侧会挂两行坐标+地名的 textBlock, headerRow 会比 44dp 头像更高
+     *     (地名换行时可达 ~60dp), 写死 58dp 会让坐标框底部仍压住标题 → 这就是之前「还挡着」的根因。
+     *   - 发现页 title 无状态栏 padding, tab 条起点 y=0; 直播页 mTitle 自带 statusBar padding, 内容起点
+     *     已在状态栏下。故发现页 offset 须额外 +状态栏高度, 直播页不需要。
+     *   - 内容区(ViewPager/SmartRefreshLayout)同步下移相同 offset, 与标题保持相邻不重叠, 标题不会被列表盖住。
      */
     private fun adjustTitleBar(fragment: Any) {
         try {
             val activity = hostActivity ?: return
             val view = XposedHelpers.callMethod(fragment, "getView") as? View ?: return
-            // 下移量 = 头像高度 + 间距, 刚好让标题栏顶部在头像底部下方
-            val offset = (dp2px(activity, 44f) + dp2px(activity, 6f)).toFloat()
+            val res = activity.resources
+            val pkg = activity.packageName
+            val fragName = fragment.javaClass.name
+            fun idOf(name: String): Int = res.getIdentifier(name, "id", pkg)
+            val elevZ = dp2px(activity, 8f).toFloat()
+            val headerH = measureHeaderHeight(activity)   // 实测左上角 headerRow 高度(头像/坐标块)
+            val margin = dp2px(activity, 6f)
 
-            // 找到标题栏 View (优先 id=title 根容器, 兜底 TitleTopNavigationView)
-            val titleId = activity.resources.getIdentifier("title", "id", activity.packageName)
+            // 找到标题栏根容器 id=title (直播=mTitle LinearLayout; 发现/身边/消息=TitleTopNavigationView)
+            val titleId = idOf("title")
             var titleView: View? = if (titleId != 0) view.findViewById<View>(titleId) else null
             if (titleView == null) {
-                val ttnId = activity.resources.getIdentifier("title_navigation_view", "id", activity.packageName)
-                titleView = if (ttnId != 0) view.findViewById<View>(ttnId) else null
+                val ttnId = idOf("title_navigation_view")
+                if (ttnId != 0) titleView = view.findViewById<View>(ttnId)
             }
             if (titleView == null) {
-                // 按 fragment 字段类型枚举 TitleTopNavigationView
+                // 按 fragment 字段类型枚举 TitleTopNavigationView (兜底)
                 val ttnClass = activity.classLoader.loadClass("com.blued.android.module.common.view.TitleTopNavigationView")
                 for (f in fragment.javaClass.declaredFields) {
                     if (ttnClass.isAssignableFrom(f.type)) {
@@ -784,26 +975,93 @@ object HomeQQHook : BaseHook {
                     }
                 }
             }
+            if (titleView == null) return
+            val title = titleView!!
 
-            // ① 下移标题栏 (translationY 视觉位移 + elevation 提到列表之上)
-            titleView?.let {
-                it.translationY = offset
-                it.elevation = dp2px(activity, 8f).toFloat()
-                it.bringToFront()
+            when {
+                // —— 直播页: 与发现页【共用 offsetToClearHeader】保证两页标题栏下移后位置完全一致。
+                //   该函数已同时减去 title.paddingTop (见其注释), 自动弥合两页布局差异:
+                //     发现页 navigationView 用【外】topMargin=statusBar (paddingTop=0, naturalTop=statusBar)
+                //     直播页 mTitle 用【内】setPadding(statusBar) (paddingTop=statusBar, naturalTop=0)
+                //   两者 (naturalTop + paddingTop) 都等于 statusBar → 算出相同 offset → 可见 tab 同高。
+                fragName.contains("LiveFragment") -> {
+                    val offset = offsetToClearHeader(activity, title)
+                    title.translationY = offset
+                    // 不设 elevation: mTitle 是实色白底(ColorMid01), 设 elevation 会画出矩形投影+硬边轮廓
+                    pushSiblingsDown(title, offset)
+                }
+                // —— 发现页: 用「实测标题栏当前顶部位置」动态算偏移, 精确让过 header, 不多不少。
+                //   原因: app 在 onInitView→a() 里会条件性给 navigationView 设 topMargin=statusBar,
+                //   标题自然位置不固定(可能已在状态栏下), 写死偏移要么挡住要么太低。
+                //   offsetToClearHeader 读 title 布局位置(不含 translationY, 幂等可重复调用)动态算。
+                fragName.contains("DiscoveryPageFragment") -> {
+                    val offset = offsetToClearHeader(activity, title)
+                    title.translationY = offset
+                    title.elevation = elevZ
+                    pushContentDown(view, title, offset)
+                }
+                // —— 身边页/消息页: title 通常自带 statusBar spacer, 沿用 headerH+margin
+                else -> {
+                    val offset = (headerH + margin).toFloat()
+                    title.translationY = offset
+                    title.elevation = elevZ
+                    title.bringToFront()
+                    pushContentDown(view, title, offset)
+                }
             }
-
-            // ② 关键修复: 标题栏用 translationY 下移是纯视觉位移, 下方内容(搜索框/列表/ViewPager)
-            //    布局位置不变会被盖住。跳过标题栏子树, 把所有可滚动内容容器也下移相同 offset。
-            //    - 身边页: SmartRefreshLayout(含列表+搜索) 下移
-            //    - 消息页: main_msg_viewpager 下移
-            //    - 发现页: view_pager 下移
-            if (titleView != null) pushContentDown(view, titleView!!, offset)
         } catch (e: Throwable) {}
+    }
+
+    /** 实测左上角 headerRow(头像 + 可选坐标/地名 textBlock) 的高度(px)。
+     *  headerRow 是 wrap_content: switch_qq_coord 关时只有头像(~48dp), 开时挂两行文本会更高
+     *  (地名换行可达 ~60dp)。用它做下移基准, 避免写死 44/58dp 导致坐标框压住标题。
+     *  测不到(未布局/header 未注入)时回退 48dp。 */
+    private fun measureHeaderHeight(activity: Activity): Int {
+        return try {
+            val root = activity.findViewById<ViewGroup>(android.R.id.content) ?: return dp2px(activity, 48f)
+            val header = root.findViewWithTag<View>(TAG) ?: return dp2px(activity, 48f)
+            if (header.height > 0) header.height else {
+                header.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+                header.measuredHeight.coerceAtLeast(dp2px(activity, 48f))
+            }
+        } catch (e: Throwable) { dp2px(activity, 48f) }
+    }
+
+    /** 动态计算 title 需下移的位移, 使其【可见内容】顶部恰好到达 header(头像/坐标块) 底沿之下 margin 处。
+     *  用于发现页与直播页(两者共用, 保证下移后位置一致)。
+     *
+     *  关键: 按「可见内容」对齐, 而非 View 边缘 —— 因为两页的 statusBar 占位方式不同:
+     *    - 发现页 navigationView: 【外】topMargin=statusBar (paddingTop=0, naturalTop=statusBar)
+     *    - 直播页 mTitle:         【内】setPadding(statusBar) (paddingTop=statusBar, naturalTop=0)
+     *  两者 naturalTop+paddingTop 都等于 statusBar, 故减去 paddingTop 后算出相同 offset,
+     *  可见 tab 在两页处于同一屏高 (之前写死偏移/或只看 View 边缘会导致两页高低不一致)。
+     *
+     *  - header 底沿 = 状态栏高度 + headerH (header 注入时 marginTop=statusBar, 故 top=statusBar)。
+     *  - naturalTop: 先把 translationY 归零再读 getLocationOnScreen (读的是布局位置 mLeft/mTop,
+     *    不含 translationY, 归零仅为双保险), 保证 100ms/400ms/800ms 多次调用幂等一致。
+     *  - 未布局(naturalTop==0)时回退 headerH+margin, 与身边/消息页一致。 */
+    private fun offsetToClearHeader(activity: Activity, titleView: View): Float {
+        val headerBottom = getStatusBarHeight(activity) + measureHeaderHeight(activity)
+        val margin = dp2px(activity, 6f)
+        val prevTy = titleView.translationY
+        titleView.translationY = 0f
+        val loc = IntArray(2)
+        titleView.getLocationOnScreen(loc)
+        titleView.translationY = prevTy
+        val naturalTop = loc[1]
+        // 减去 paddingTop: 对齐「可见内容」而非 View 边缘 (弥合直播页内部 padding vs 发现页外部 topMargin)
+        val contentTop = naturalTop + titleView.paddingTop
+        return if (naturalTop > 0) {
+            (headerBottom + margin - contentTop).coerceAtLeast(0).toFloat()
+        } else {
+            (measureHeaderHeight(activity) + margin).toFloat()
+        }
     }
 
     /**
      * 递归收集「可滚动内容容器」(ViewPager/SmartRefreshLayout) 并下移 offset。
      * 跳过标题栏 View 及其子树, 避免把标题栏双重下移。
+     * (身边页 SmartRefreshLayout / 消息页 main_msg_viewpager / 发现页 CustomViewPager)
      */
     private fun pushContentDown(root: View, titleView: View, offset: Float) {
         val targets = ArrayList<View>()
@@ -814,7 +1072,7 @@ object HomeQQHook : BaseHook {
     }
 
     private fun collectContentContainers(v: View, titleView: View, out: ArrayList<View>) {
-        if (v === titleView) return  // 跳过标题栏本身(其子树也一并跳过)
+        if (v === titleView) return  // 跳过标题栏本身(其子树也一并跳过, scrollView 跟随 title 移动)
         val cn = v.javaClass.name
         // 内容容器特征: ViewPager(消息/发现页) 或 SmartRefreshLayout(身边页含列表+搜索)
         if (cn.contains("ViewPager") || cn.contains("SmartRefreshLayout")) {
@@ -823,6 +1081,20 @@ object HomeQQHook : BaseHook {
         }
         if (v is ViewGroup) {
             for (i in 0 until v.childCount) collectContentContainers(v.getChildAt(i), titleView, out)
+        }
+    }
+
+    /**
+     * 直播页专用: 下移 title 的所有兄弟节点 (内容容器整体)。
+     * 直播页 fragment_live 结构: LinearLayout[include(title), FrameLayout[CustomViewPager/FloatSpreadView/tab bar...]]
+     *   title 的兄弟 = 内容 FrameLayout, 下移它则 ViewPager/悬浮按钮/tab bar 全部跟随, 不会错乱。
+     * (若用递归只下移 ViewPager, tab bar 留原位 → 直播列表区域错位/看起来消失)
+     */
+    private fun pushSiblingsDown(titleView: View, offset: Float) {
+        val p = titleView.parent as? ViewGroup ?: return
+        for (i in 0 until p.childCount) {
+            val c = p.getChildAt(i)
+            if (c !== titleView) c.translationY = offset
         }
     }
 

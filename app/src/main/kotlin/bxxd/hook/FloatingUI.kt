@@ -31,6 +31,7 @@ import kotlin.system.exitProcess
 object FloatingUI : BaseHook {
 
     private var isReceiverRegistered = false
+    @Volatile private var isPrefBootstrapped = false
     private val mainHandler = Handler(Looper.getMainLooper())
     var hostClassLoader: ClassLoader? = null
 
@@ -40,6 +41,41 @@ object FloatingUI : BaseHook {
             val homeActivityClass = lpparam.classLoader.loadClass("com.soft.blued.ui.home.HomeActivity")
             homeActivityClass.findMethod { name == "onResume" }.hookAfter { param ->
                 val activity = param.thisObject as Activity
+
+                // 0) ★ 首次进入: 从模块侧引导填充 Blued 本地「缺失」的配置
+                //    重要: 只填缺失, 绝不覆盖已有 —— 因为用户在 Blued 内(悬浮球面板)保存的值
+                //    直接写 Blued 本地, 是权威; 若用模块 prefs 覆盖, 旧残留(如白色)会把新值冲掉。
+                //    模块App保存的后续变更由 MAIN_SYNC_PUSH 广播实时同步。每进程只引导一次。
+                if (!isPrefBootstrapped) {
+                    isPrefBootstrapped = true
+                    try {
+                        val localPrefs = activity.getSharedPreferences("llhook_blued_local_v2", Context.MODE_PRIVATE)
+                        val blocklist = setOf("custom_lat", "custom_lng", "master_timestamp")
+                        val cursor = activity.contentResolver.query(
+                            android.net.Uri.parse("content://com.app.hook.settings/all"),
+                            null, null, null, null)
+                        cursor?.use { c ->
+                            val ki = c.getColumnIndex("key")
+                            val vi = c.getColumnIndex("value")
+                            if (ki >= 0 && vi >= 0) {
+                                val ed = localPrefs.edit()
+                                var changed = false
+                                while (c.moveToNext()) {
+                                    val k = c.getString(ki) ?: continue
+                                    if (k in blocklist) continue
+                                    if (localPrefs.contains(k)) continue   // ★ 只填缺失
+                                    val v = c.getString(vi) ?: ""
+                                    when (v) {
+                                        "true" -> { ed.putBoolean(k, true); changed = true }
+                                        "false" -> { ed.putBoolean(k, false); changed = true }
+                                        else -> if (v.isNotEmpty()) { ed.putString(k, v); changed = true }
+                                    }
+                                }
+                                if (changed) ed.apply()
+                            }
+                        }
+                    } catch (e: Throwable) {}
+                }
 
                 // 1) 离线坐标同步: 拉取模块侧最新虚拟定位, 写入 Blued 本地
                 try {

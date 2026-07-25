@@ -15,6 +15,7 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -35,6 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
 import bxxd.hook.AutoVisitHook
 import bxxd.hook.ChatBackupManager
 import bxxd.hook.Config
@@ -169,7 +171,7 @@ fun SettingsContent(hostActivity: Activity?, inHost: Boolean, panelMode: Boolean
                     actions = {
                         val accentBlue = Color(0xFF3B82F6)
                         if (!inHost) {
-                            // 桌面图标入口: 右上角“启动 Blued”按钮
+                            // 桌面图标入口: 右上角“启动 Blued”按钮 (绿色背景)
                             val ctx = LocalContext.current
                             TextButton(
                                 onClick = {
@@ -184,11 +186,15 @@ fun SettingsContent(hostActivity: Activity?, inHost: Boolean, panelMode: Boolean
                                         }
                                     }.onFailure { Toast.makeText(ctx, "启动失败: ${it.message}", Toast.LENGTH_SHORT).show() }
                                 },
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                                modifier = Modifier
+                                    .offset(x = (-5).dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color(0xFF22C55E))
                             ) {
-                                Icon(Icons.Filled.PlayArrow, "启动 Blued", tint = accentBlue, modifier = Modifier.size(18.dp))
+                                Icon(Icons.Filled.PlayArrow, "启动 Blued", tint = Color.White, modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(4.dp))
-                                Text("启动", color = textColor, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                Text("启动", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                             }
                         } else {
                             // Blued 内 (悬浮窗 / “我的”入口): 右上角“重启 Blued”按钮
@@ -227,24 +233,63 @@ fun SettingsContent(hostActivity: Activity?, inHost: Boolean, panelMode: Boolean
                 verticalArrangement = Arrangement.spacedBy(24.dp)
             ) {
 
-                AnimatedVisibility(
-                    visible = visible,
-                    enter = fadeIn(tween(500)) + slideInVertically(tween(500)) { -it / 2 }
-                ) {
-                    val hostHint = if (mineEntry) "“我的”页面模块入口·完整配置中心。"
-                        else if (inHost) "悬浮球·快捷设置 (完整配置请从「我的」页面模块入口进入)。"
-                        else "桌面图标进入。点击底部「重启 Blued 生效」应用改动。"
-                    Text(
-                        "为 Blued 极速版 / 标准版 提供清爽、沉浸的使用体验。\n$hostHint",
-                        color = subTextColor,
-                        fontSize = 14.sp,
-                        modifier = Modifier.padding(horizontal = 8.dp)
-                    )
+                // ====== LSPosed 激活状态卡片 (仅桌面图标入口显示) ======
+                if (!inHost) AnimatedVisibility(visible, enter = fadeIn(tween(500)) + slideInVertically(tween(500)) { -it / 2 }) {
+                    val activated = com.example.MainActivity.moduleActivated
+                    val brush = if (activated) Brush.linearGradient(listOf(Color(0xFF22C55E), Color(0xFF16A34A)))
+                                else Brush.linearGradient(listOf(Color(0xFFEF4444), Color(0xFFF97316)))
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(brush)
+                            .padding(horizontal = 18.dp, vertical = 16.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                Modifier.size(42.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.22f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    if (activated) Icons.Outlined.CheckCircle else Icons.Outlined.Warning,
+                                    null, tint = Color.White, modifier = Modifier.size(24.dp)
+                                )
+                            }
+                            Spacer(Modifier.width(14.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    if (activated) "LSPosed 已激活" else "LSPosed 未激活",
+                                    color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold
+                                )
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    if (activated) "模块运行正常，所有功能均已生效"
+                                     else "请在 LSPosed 中勾选本模块后强制停止 Blued",
+                                    color = Color.White.copy(alpha = 0.92f), fontSize = 12.sp
+                                )
+                            }
+                        }
+                    }
                 }
 
                 // ====== 基础功能 (「我的」入口与桌面图标显示, 悬浮球不显示) ======
                 if (mineEntry || !inHost) AnimatedVisibility(visible, enter = fadeIn(tween(500, delayMillis = 100)) + slideInVertically(tween(500, delayMillis = 100)) { 100 }) {
                     SettingsSection("基础功能", glassColor, glassBorder, subTextColor) {
+                        // 悬浮球开关 (仅在 Blued 宿主内显示, 桌面图标入口无悬浮球)
+                        if (inHost) {
+                            val ctx = LocalContext.current
+                            var showFloat by remember { mutableStateOf(!bxxd.hook.FloatButtonInjector.isCurrentlyHidden(ctx)) }
+                            SettingsSwitchItem("显示悬浮球", "主页右下角悬浮入口球; 关闭后可在此重新开启", Icons.Outlined.Circle,
+                                showFloat, { on ->
+                                    showFloat = on
+                                    val a = hostActivity
+                                    if (a != null) {
+                                        if (on) bxxd.hook.FloatButtonInjector.unhide(a)
+                                        else bxxd.hook.FloatButtonInjector.hide(a)
+                                    }
+                                }, textColor, subTextColor)
+                            SettingsDivider(glassBorder)
+                        }
                         var switchLite by rememberConfigBoolean("switch_lite")
                         var riskBlock by rememberConfigBoolean("switch_risk_user_block")
                         var spoofLite by rememberConfigBoolean("switch_spoof_lite")
@@ -270,35 +315,231 @@ fun SettingsContent(hostActivity: Activity?, inHost: Boolean, panelMode: Boolean
                     SettingsSection("界面净化", glassColor, glassBorder, subTextColor) {
                         var removeAds by rememberConfigBoolean("switch_block_ads", true)
                         var removeLive by rememberConfigBoolean("switch_block_live", false)
-                        var removeDiscover by rememberConfigBoolean("purify_tab_feed", false)
-                        var qqHome by rememberConfigBoolean("switch_qq_home", false)
-                        var chatBtnStyle by rememberConfigBoolean("switch_chat_button_style", false)
 
                         SettingsSwitchItem("拦截广告 SDK 请求", "底层 OkHttp/Socket 直接断网", Icons.Outlined.Block,
                             removeAds, { removeAds = it }, textColor, subTextColor)
                         SettingsDivider(glassBorder)
                         SettingsSwitchItem("拦截直播请求", "屏蔽底部导航栏的直播相关请求", Icons.Outlined.Videocam,
                             removeLive, { removeLive = it }, textColor, subTextColor)
+                    }
+                }
+
+                // ====== 个性化 (首页/资料/导航/卡片/背景) ======
+                AnimatedVisibility(visible, enter = fadeIn(tween(500, delayMillis = 175)) + slideInVertically(tween(500, delayMillis = 175)) { 100 }) {
+                    SettingsFolder(
+                        title = "个性化",
+                        subtitle = "首页 / 资料 / 导航 / 卡片 / 背景等外观定制",
+                        icon = Icons.Outlined.Palette,
+                        glassColor = glassColor,
+                        glassBorder = glassBorder,
+                        textColor = textColor,
+                        subTextColor = subTextColor
+                    ) {
+                        var qqHome by rememberConfigBoolean("switch_qq_home", false)
+                        var showQqMenu by remember { mutableStateOf(false) }
+                        var qqCoord by rememberConfigBoolean("switch_qq_coord", true)
+                        SettingsSwitchItem(
+                            title = "QQ 风格首页",
+                            subtitle = "左上角圆形头像 + 右滑打开我的",
+                            icon = Icons.Outlined.Dashboard,
+                            checked = qqHome,
+                            onCheckedChange = { qqHome = it },
+                            textColor = textColor,
+                            subTextColor = subTextColor,
+                            trailingSlot = {
+                                Box {
+                                    IconButton(onClick = { showQqMenu = true }) {
+                                        Icon(Icons.Outlined.Tune, contentDescription = "QQ首页设置")
+                                    }
+                                    if (showQqMenu) {
+                                        CenteredPanelDialog(
+                                            onDismissRequest = { showQqMenu = false },
+                                            title = "QQ 风格首页设置",
+                                            subtitle = "调整首页布局细节"
+                                        ) {
+                                            SettingsSwitchItem(
+                                                "左上角坐标显示",
+                                                "头像右侧显示当前虚拟定位坐标 + 真实地名, 点击可跳转地图选点",
+                                                Icons.Outlined.MyLocation, qqCoord, { qqCoord = it }, textColor, subTextColor
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        )
                         SettingsDivider(glassBorder)
-                        SettingsSwitchItem("隐藏发现入口", "移除底部导航栏的发现按钮", Icons.Outlined.Explore,
-                            removeDiscover, { removeDiscover = it }, textColor, subTextColor)
-                        SettingsDivider(glassBorder)
-                        SettingsSwitchItem("QQ 风格首页", "左上角圆形头像 + 右滑打开我的", Icons.Outlined.Dashboard,
-                            qqHome, { qqHome = it }, textColor, subTextColor)
-                        SettingsDivider(glassBorder)
+                        var chatBtnStyle by rememberConfigBoolean("switch_chat_button_style", false)
                         SettingsSwitchItem("资料页聊天按钮改圆形右下角", "UI 净化: 圆形悬浮聊天按钮", Icons.Outlined.ChatBubbleOutline,
                             chatBtnStyle, { chatBtnStyle = it }, textColor, subTextColor)
+                        SettingsDivider(glassBorder)
+                        // 底部导航栏: 圆角 + 悬浮 合并 (main_navigation)
+                        var navRound by rememberConfigBoolean("switch_main_nav_round", false)
+                        var showNavPanel by remember { mutableStateOf(false) }
+                        SettingsSwitchItem(
+                            title = "导航栏圆角悬浮",
+                            subtitle = "底部 Tab 栏圆角 + 上抬悬浮, 可调半径/宽度/边距/阴影, 移除分割线",
+                            icon = Icons.Outlined.DashboardCustomize,
+                            checked = navRound,
+                            onCheckedChange = { navRound = it },
+                            textColor = textColor,
+                            subTextColor = subTextColor,
+                            trailingSlot = {
+                                Box {
+                                    IconButton(onClick = { showNavPanel = true }) {
+                                        Icon(Icons.Outlined.Tune, contentDescription = "导航栏设置")
+                                    }
+                                    if (showNavPanel) {
+                                        CenteredPanelDialog(
+                                            onDismissRequest = { showNavPanel = false },
+                                            title = "底部导航栏设置",
+                                            subtitle = "圆角半径 / 宽度 / 高度 / 边距 / 阴影"
+                                        ) {
+                                            MainNavPanel(textColor, subTextColor)
+                                        }
+                                    }
+                                }
+                            }
+                        )
+                        // 附近列表卡片化: fl_main 圆角背景 + 自定义颜色/渐变
+                        var nearbyCard by rememberConfigBoolean("switch_nearby_card", false)
+                        var showCardPanel by remember { mutableStateOf(false) }
+                        SettingsSwitchItem(
+                            title = "附近列表卡片化",
+                            subtitle = "每条列表项改为圆角卡片背景, 可自定义颜色/透明度/渐变",
+                            icon = Icons.Outlined.DashboardCustomize,
+                            checked = nearbyCard,
+                            onCheckedChange = { nearbyCard = it },
+                            textColor = textColor,
+                            subTextColor = subTextColor,
+                            trailingSlot = {
+                                Box {
+                                    IconButton(onClick = { showCardPanel = true }) {
+                                        Icon(Icons.Outlined.Palette, contentDescription = "卡片样式")
+                                    }
+                                    if (showCardPanel) {
+                                        CenteredPanelDialog(
+                                            onDismissRequest = { showCardPanel = false },
+                                            title = "附近列表卡片样式",
+                                            subtitle = "实时调整圆角与背景"
+                                        ) {
+                                            NearbyCardPanel(textColor, subTextColor, glassColor, glassBorder)
+                                        }
+                                    }
+                                }
+                            }
+                        )
+                        SettingsDivider(glassBorder)
+                        // 身边页背景: recycler_view 整页背景 颜色/渐变/图库图片
+                        var nearbyPageBg by rememberConfigBoolean("switch_nearby_page_bg", false)
+                        var showPageBgPanel by remember { mutableStateOf(false) }
+                        SettingsSwitchItem(
+                            title = "身边页背景",
+                            subtitle = "身边页整页背景 (recycler_view), 可调色板或图库图片自定义",
+                            icon = Icons.Outlined.Wallpaper,
+                            checked = nearbyPageBg,
+                            onCheckedChange = { nearbyPageBg = it },
+                            textColor = textColor,
+                            subTextColor = subTextColor,
+                            trailingSlot = {
+                                Box {
+                                    IconButton(onClick = { showPageBgPanel = true }) {
+                                        Icon(Icons.Outlined.Palette, contentDescription = "页面背景样式")
+                                    }
+                                    if (showPageBgPanel) {
+                                        CenteredPanelDialog(
+                                            onDismissRequest = { showPageBgPanel = false },
+                                            title = "身边页背景样式",
+                                            subtitle = "整页背景颜色或图片"
+                                        ) {
+                                            NearbyPageBgPanel(textColor, subTextColor, glassColor, glassBorder)
+                                        }
+                                    }
+                                }
+                            }
+                        )
+                        SettingsDivider(glassBorder)
+                        // 消息列表卡片化: ll_msg_f_root 圆角背景 + 自定义颜色/渐变
+                        var msgCard by rememberConfigBoolean("switch_msg_card", false)
+                        var showMsgCardPanel by remember { mutableStateOf(false) }
+                        SettingsSwitchItem(
+                            title = "消息列表卡片化",
+                            subtitle = "每条会话项改为圆角卡片背景, 可自定义颜色/透明度/渐变",
+                            icon = Icons.Outlined.DashboardCustomize,
+                            checked = msgCard,
+                            onCheckedChange = { msgCard = it },
+                            textColor = textColor,
+                            subTextColor = subTextColor,
+                            trailingSlot = {
+                                Box {
+                                    IconButton(onClick = { showMsgCardPanel = true }) {
+                                        Icon(Icons.Outlined.Palette, contentDescription = "消息卡片样式")
+                                    }
+                                    if (showMsgCardPanel) {
+                                        CenteredPanelDialog(
+                                            onDismissRequest = { showMsgCardPanel = false },
+                                            title = "消息列表卡片样式",
+                                            subtitle = "实时调整圆角与背景"
+                                        ) {
+                                            MsgCardPanel(textColor, subTextColor, glassColor, glassBorder)
+                                        }
+                                    }
+                                }
+                            }
+                        )
+                        SettingsDivider(glassBorder)
+                        // 消息页背景: 整页背景 颜色/渐变/图库图片
+                        var msgPageBg by rememberConfigBoolean("switch_msg_page_bg", false)
+                        var showMsgPageBgPanel by remember { mutableStateOf(false) }
+                        SettingsSwitchItem(
+                            title = "消息页背景",
+                            subtitle = "消息页整页背景, 可调色板或图库图片自定义",
+                            icon = Icons.Outlined.Wallpaper,
+                            checked = msgPageBg,
+                            onCheckedChange = { msgPageBg = it },
+                            textColor = textColor,
+                            subTextColor = subTextColor,
+                            trailingSlot = {
+                                Box {
+                                    IconButton(onClick = { showMsgPageBgPanel = true }) {
+                                        Icon(Icons.Outlined.Palette, contentDescription = "消息页背景样式")
+                                    }
+                                    if (showMsgPageBgPanel) {
+                                        CenteredPanelDialog(
+                                            onDismissRequest = { showMsgPageBgPanel = false },
+                                            title = "消息页背景样式",
+                                            subtitle = "整页背景颜色或图片"
+                                        ) {
+                                            MsgPageBgPanel(textColor, subTextColor, glassColor, glassBorder)
+                                        }
+                                    }
+                                }
+                            }
+                        )
                     }
                 }
 
                 // ====== 聊天增强 (「我的」入口与桌面图标显示) ======
                 if (mineEntry || !inHost) AnimatedVisibility(visible, enter = fadeIn(tween(500, delayMillis = 200)) + slideInVertically(tween(500, delayMillis = 200)) { 100 }) {
-                    SettingsSection("聊天增强", glassColor, glassBorder, subTextColor) {
+                    SettingsFolder(
+                        title = "聊天增强",
+                        subtitle = "防撒回 / 闪照 / 已读防隐身 / 资料透视 等",
+                        icon = Icons.Outlined.Forum,
+                        glassColor = glassColor,
+                        glassBorder = glassBorder,
+                        textColor = textColor,
+                        subTextColor = subTextColor
+                    ) {
                         var preventRecall by rememberConfigBoolean("switch_anti_recall", true)
                         var flashPhoto by rememberConfigBoolean("switch_flash_photo", false)
+                        var flashAdSkip by rememberConfigBoolean("switch_flash_ad_skip", false)
+                        var nearbyChat by rememberConfigBoolean("switch_nearby_chat", false)
+                        var nearbyAlbum by rememberConfigBoolean("switch_nearby_album", false)
+                        var nearbySort by rememberConfigBoolean("switch_nearby_sort", false)
                         var screenshot by rememberConfigBoolean("switch_screenshot", false)
                         var stealthRead by rememberConfigBoolean("switch_read_receipt", false)
                         var chatWatermark by rememberConfigBoolean("switch_chat_watermark", true)
+                        var deletedMark by rememberConfigBoolean("switch_deleted_mark", true)
+                        var msgTimestamp by rememberConfigBoolean("switch_msg_timestamp", false)
 
                         SettingsSwitchItem("防撤回", "拦截并显示对方撤回的消息", Icons.Outlined.Message,
                             preventRecall, { preventRecall = it }, textColor, subTextColor)
@@ -306,13 +547,31 @@ fun SettingsContent(hostActivity: Activity?, inHost: Boolean, panelMode: Boolean
                         SettingsSwitchItem("闪照转照片", "把闪照直接当普通图片查看", Icons.Outlined.Photo,
                             flashPhoto, { flashPhoto = it }, textColor, subTextColor)
                         SettingsDivider(glassBorder)
+                        SettingsSwitchItem("闪照免看广告", "闪照次数用尽后, 点「看视频获得一次机会」直接发放奖励, 跳过广告视频", Icons.Outlined.VideoCall,
+                            flashAdSkip, { flashAdSkip = it }, textColor, subTextColor)
+                        SettingsDivider(glassBorder)
+                        SettingsSwitchItem("附近列表一键聊天", "附近/访客列表项: 距离左移, 右侧加💬按钮直达聊天", Icons.Outlined.Forum,
+                            nearbyChat, { nearbyChat = it }, textColor, subTextColor)
+                        SettingsDivider(glassBorder)
+                        SettingsSwitchItem("附近列表查看私密相册", "聊天按钮下方加🖼按钮, 免进资料页直接查看对方私密相册", Icons.Outlined.PhotoLibrary,
+                            nearbyAlbum, { nearbyAlbum = it }, textColor, subTextColor)
+                        SettingsDivider(glassBorder)
+                        SettingsSwitchItem("首页增加筛选", "附近页排序栏末尾追加筛选按钮 (按角色/VIP/相册/真人等客户端筛选, 抓包不可见), 筛选条件自动持久化", Icons.Outlined.FilterAlt,
+                            nearbySort, { nearbySort = it }, textColor, subTextColor)
+                        SettingsDivider(glassBorder)
                         SettingsSwitchItem("去除截屏限制", "聊天页禁止截屏时强制允许", Icons.Outlined.Screenshot,
                             screenshot, { screenshot = it }, textColor, subTextColor)
                         SettingsDivider(glassBorder)
                         SettingsSwitchItem("消息已读防隐身", "即使对方开启隐藏已读, 依然显示", Icons.Outlined.MarkChatRead,
                             stealthRead, { stealthRead = it }, textColor, subTextColor)
                         SettingsDivider(glassBorder)
-                        SettingsSwitchItem("聊天页水印", "对方聊天页注入水印信息 (反截图泄露)", Icons.Outlined.BrandingWatermark,
+                        SettingsSwitchItem("已注销/风险用户标记", "对方注销账号/风险用户时, 消息列表名字旁显示已注销·风险·诈骗标记, 打开资料页弹提示", Icons.Outlined.PersonOff,
+                            deletedMark, { deletedMark = it }, textColor, subTextColor)
+                        SettingsDivider(glassBorder)
+                        SettingsSwitchItem("消息显示具体时间", "聊天页每条消息下方显示发送时间 (HH:mm)", Icons.Outlined.Schedule,
+                            msgTimestamp, { msgTimestamp = it }, textColor, subTextColor)
+                        SettingsDivider(glassBorder)
+                        SettingsSwitchItem("聊天页资料透视", "聊天页半透明显示对方资料 (年龄/身高/距离破译/最后在线, 反截图泄露)", Icons.Outlined.PersonSearch,
                             chatWatermark, { chatWatermark = it }, textColor, subTextColor)
                     }
                 }
@@ -321,10 +580,14 @@ fun SettingsContent(hostActivity: Activity?, inHost: Boolean, panelMode: Boolean
                 if (mineEntry || !inHost) AnimatedVisibility(visible, enter = fadeIn(tween(500, delayMillis = 230)) + slideInVertically(tween(500, delayMillis = 230)) { 100 }) {
                     SettingsSection("隐私与特权", glassColor, glassBorder, subTextColor) {
                         var privatePhoto by rememberConfigBoolean("switch_private_photo", false)
+                        var noWatermark by rememberConfigBoolean("switch_watermark", false)
                         var crackVip by rememberConfigBoolean("switch_local_vip", false)
 
                         SettingsSwitchItem("查看私密相册", "绕过私密相册权限校验", Icons.Outlined.PhotoLibrary,
                             privatePhoto, { privatePhoto = it }, textColor, subTextColor)
+                        SettingsDivider(glassBorder)
+                        SettingsSwitchItem("无水印保存图片", "保存照片/动态时去除水印, 并解除保存限制", Icons.Outlined.WaterDrop,
+                            noWatermark, { noWatermark = it }, textColor, subTextColor)
                         SettingsDivider(glassBorder)
                         SettingsSwitchItem("本地 VIP (仅本地)", "解锁本地部分 VIP 功能如高级筛选", Icons.Outlined.Star,
                             crackVip, { crackVip = it }, textColor, subTextColor)
@@ -348,8 +611,36 @@ fun SettingsContent(hostActivity: Activity?, inHost: Boolean, panelMode: Boolean
                                 }
                             })
                         SettingsDivider(glassBorder)
-                        SettingsSwitchItem("位置追踪", "个人主页右上角显示追踪按钮 (实景雷达)", Icons.Outlined.GpsFixed,
-                            locationTracking, { locationTracking = it }, textColor, subTextColor)
+                        var trackMenuExpanded by remember { mutableStateOf(false) }
+                        val trackManual by rememberConfigBoolean("switch_track_manual", false)
+                        SettingsSwitchItem(
+                            title = "位置追踪",
+                            subtitle = if (trackManual)
+                                "手动模式：进入主页不自动解算，点击「追踪」才解算"
+                            else
+                                "个人主页显示追踪按钮，进入主页即自动后台解算",
+                            icon = Icons.Outlined.GpsFixed,
+                            checked = locationTracking,
+                            onCheckedChange = { locationTracking = it },
+                            textColor = textColor,
+                            subTextColor = subTextColor,
+                            trailingSlot = {
+                                Box {
+                                    IconButton(onClick = { trackMenuExpanded = true }) {
+                                        Icon(Icons.Outlined.Tune, contentDescription = "追踪设置")
+                                    }
+                                    if (trackMenuExpanded) {
+                                        CenteredPanelDialog(
+                                            onDismissRequest = { trackMenuExpanded = false },
+                                            title = "位置追踪设置",
+                                            subtitle = "调整追踪行为模式"
+                                        ) {
+                                            TrackManualMenuContent()
+                                        }
+                                    }
+                                }
+                            }
+                        )
                     }
                 }
 
@@ -416,48 +707,103 @@ fun SettingsContent(hostActivity: Activity?, inHost: Boolean, panelMode: Boolean
 }
 
 // ---------------------------------------------------------------------------
-//  净化中心 (总开关 + 逐项列表, 数据源与 AdsHook.PURIFY_ITEMS 一致)
+//  净化中心 (总开关 + 居中面板逐项配置, 数据源与 AdsHook.PURIFY_ITEMS 一致)
 // ---------------------------------------------------------------------------
 
 @Composable
 private fun PurifySection(
     glassColor: Color, glassBorder: Color, textColor: Color, subTextColor: Color
 ) {
-    var expanded by remember { mutableStateOf(false) }
-    val purifyItems = remember {
-        bxxd.hook.AdsHook.PURIFY_ITEMS
-    }
+    var showPanel by remember { mutableStateOf(false) }
+    val itemCount = remember { bxxd.hook.AdsHook.PURIFY_ITEMS.size }
 
     SettingsSection("净化中心", glassColor, glassBorder, subTextColor) {
         var master by rememberConfigBoolean("switch_remove_ads", false)
         SettingsSwitchItem(
             title = "净化总开关 (全部生效)",
-            subtitle = "打开则下列所有净化项一律生效; 点击整行展开逐项",
+            subtitle = "打开则所有净化项一律生效; 点右侧⚙按钮逐项配置",
             icon = Icons.Outlined.AutoFixHigh,
             checked = master,
             onCheckedChange = { master = it },
             textColor = textColor,
             subTextColor = subTextColor,
-            onClickRow = { expanded = !expanded }
-        )
-        SettingsDivider(glassBorder)
-        if (expanded) {
-            purifyItems.forEachIndexed { idx, (label, key) ->
-                var on by rememberConfigBoolean(key, false)
-                SettingsSwitchItem(
-                    title = "└ $label",
-                    subtitle = null,
-                    icon = null,
-                    checked = on,
-                    onCheckedChange = { on = it },
-                    textColor = textColor,
-                    subTextColor = subTextColor
-                )
-                if (idx < purifyItems.size - 1) SettingsDivider(glassBorder)
+            trailingSlot = {
+                Box {
+                    IconButton(onClick = { showPanel = true }) {
+                        Icon(Icons.Outlined.Tune, contentDescription = "净化项配置")
+                    }
+                    if (showPanel) {
+                        CenteredPanelDialog(
+                            onDismissRequest = { showPanel = false },
+                            title = "净化项配置",
+                            subtitle = "共 $itemCount 项, 逐项开关 (总开关优先于单项)"
+                        ) {
+                            PurifyItemsPanelContent(textColor, subTextColor)
+                        }
+                    }
+                }
             }
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  净化项居中面板内容: 可滚动列表, 每项一个开关 (读写 purify_* 键)
+// ---------------------------------------------------------------------------
+@Composable
+private fun PurifyItemsPanelContent(textColor: Color, subTextColor: Color) {
+    val purifyItems = remember { bxxd.hook.AdsHook.PURIFY_ITEMS }
+    val dividerColor = subTextColor.copy(alpha = 0.25f)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 420.dp)
+            .verticalScroll(rememberScrollState())
+    ) {
+        purifyItems.forEachIndexed { idx, (label, key) ->
+            PurifyItemRow(label, key, textColor, dividerColor, isLast = idx == purifyItems.size - 1)
         }
     }
 }
+
+@Composable
+private fun PurifyItemRow(
+    label: String, key: String, textColor: Color, dividerColor: Color, isLast: Boolean
+) {
+    var on by rememberConfigBoolean(key, false)
+    val haptic = LocalHapticFeedback.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                on = !on
+            }
+            .padding(vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, color = textColor, fontSize = 14.sp, modifier = Modifier.weight(1f))
+        Spacer(modifier = Modifier.width(12.dp))
+        Switch(
+            checked = on,
+            onCheckedChange = {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                on = it
+            },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color.White,
+                checkedTrackColor = Color(0xFF34C759),
+                uncheckedTrackColor = Color.Gray.copy(alpha = 0.2f),
+                uncheckedThumbColor = Color.White,
+                uncheckedBorderColor = Color.Transparent
+            )
+        )
+    }
+    if (!isLast) {
+        HorizontalDivider(color = dividerColor, thickness = 0.5.dp)
+    }
+}
+
 
 // ---------------------------------------------------------------------------
 //  工具入口分组 (仅 Blued 内)
@@ -494,9 +840,10 @@ private fun ToolsSection(
             catch (e: Throwable) { Toast.makeText(activity, "备份页唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
         }
         SettingsDivider(glassBorder)
-        ToolRow("🧹 净化中心 (逐项开关)", "独立控制每个净化项", Icons.Outlined.CleaningServices, subTextColor) {
-            // 净化中心已在主页「净化中心」分区完整实现 (总开关+29项逐项), 此处引导用户
-            Toast.makeText(activity, "净化中心请在本页「净化中心」分区配置\n(总开关 + 29 项逐项开关)", Toast.LENGTH_LONG).show()
+        ToolRow("👥 用户列表", "已收集 ${AutoVisitHook.cachedUsers.size} 名附近用户 · 点击查看", Icons.Outlined.Group, subTextColor) {
+            // 「一键站街」(AutoVisitHook) 拦截 Gson.fromJson 抓取的附近用户缓存, 此处展示
+            try { showHostComposeScreen(activity) { onClose -> NearbyUsersScreen(activity, onClose) } }
+            catch (e: Throwable) { Toast.makeText(activity, "用户列表唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
         }
         SettingsDivider(glassBorder)
         ToolRow("🔖 坐标收藏夹管理", "批量管理 / 一键设为虚拟定位 / 导入导出", Icons.Outlined.Bookmark, subTextColor) {
@@ -524,6 +871,12 @@ private fun ToolsSection(
             // 新功能: 捕获/浏览 Blued 解密后的明文 API 响应 (hook AES-GCM 解密函数)
             try { showHostComposeScreen(activity) { onClose -> NetworkCaptureScreen(activity, onClose) } }
             catch (e: Throwable) { Toast.makeText(activity, "抓包页唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
+        }
+        SettingsDivider(glassBorder)
+        ToolRow("🚫 屏蔽广告接口", "自定义广告/追踪接口黑名单 · 逐条开关 · 导入导出", Icons.Outlined.Block, subTextColor) {
+            // 新功能: 抓包发现的广告/追踪接口, 自己加进黑名单三层断网; 支持增删改 + 逐条开关 + 导入导出
+            try { showHostComposeScreen(activity) { onClose -> AdApiBlockScreen(activity, onClose) } }
+            catch (e: Throwable) { Toast.makeText(activity, "广告接口黑名单唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
         }
         SettingsDivider(glassBorder)
         ToolRow("🔑 凭证与运行状态", "Authorization / UA / 坐标 / API Key 查看", Icons.Outlined.VpnKey, subTextColor) {
@@ -640,6 +993,95 @@ fun SettingsSection(
     }
 }
 
+// ---------------------------------------------------------------------------
+//  「文件夹」式分组: 列表里只占一行卡片, 点击弹出居中弹窗展示内部项。
+//  用于项数较多的分组 (个性化 / 聊天增强), 避免主列表过长。
+//  弹窗内容可滚动 (heightIn max 460dp), 内部项与普通 SettingsSwitchItem 完全一致。
+// ---------------------------------------------------------------------------
+@Composable
+fun SettingsFolder(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    glassColor: Color,
+    glassBorder: Color,
+    textColor: Color,
+    subTextColor: Color,
+    content: @Composable () -> Unit
+) {
+    var open by remember { mutableStateOf(false) }
+    val haptic = LocalHapticFeedback.current
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.98f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        label = "folderScale"
+    )
+
+    Column {
+        Text(title, color = subTextColor, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(start = 16.dp, bottom = 6.dp))
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = glassColor,
+            border = BorderStroke(1.dp, glassBorder),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .scale(scale)
+                    .clickable(
+                        interactionSource = interactionSource,
+                        indication = LocalIndication.current,
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            open = true
+                        }
+                    )
+                    .padding(horizontal = 16.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // 图标徽章
+                Surface(
+                    shape = CircleShape,
+                    color = textColor.copy(alpha = 0.08f),
+                    modifier = Modifier.size(42.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                        Icon(icon, contentDescription = title, tint = textColor, modifier = Modifier.size(20.dp))
+                    }
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(title, color = textColor, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    Text(subtitle, color = subTextColor, fontSize = 11.sp, lineHeight = 14.sp)
+                }
+                Icon(Icons.Outlined.KeyboardArrowRight, contentDescription = "展开",
+                    tint = subTextColor, modifier = Modifier.size(24.dp))
+            }
+        }
+    }
+
+    if (open) {
+        CenteredPanelDialog(
+            onDismissRequest = { open = false },
+            title = title,
+            subtitle = subtitle
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 460.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                content()
+            }
+        }
+    }
+}
+
 @Composable
 fun SettingsSwitchItem(
     title: String,
@@ -651,7 +1093,15 @@ fun SettingsSwitchItem(
     subTextColor: Color,
     onClickTrailing: (() -> Unit)? = null,
     /** 整行点击回调 (用于 PurifySection 展开等); 与普通开关点击互斥。 */
-    onClickRow: (() -> Unit)? = null
+    onClickRow: (() -> Unit)? = null,
+    /** 尾部按钮图标 (仅 onClickTrailing 生效时使用)。 */
+    trailingIcon: ImageVector = Icons.Outlined.Map,
+    trailingContentDescription: String = "Pick location",
+    /**
+     * 自定义尾部内容 (优先级高于 onClickTrailing): 用于在尾部嵌入弹出菜单等复杂交互。
+     * 传入后, 整行点击不再切换开关 (需用开关本体或菜单内部控件操作)。
+     */
+    trailingSlot: (@Composable () -> Unit)? = null
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
@@ -674,7 +1124,7 @@ fun SettingsSwitchItem(
                     if (onClickRow != null) {
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         onClickRow()
-                    } else if (onClickTrailing == null) {
+                    } else if (onClickTrailing == null && trailingSlot == null) {
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         onCheckedChange(!checked)
                     }
@@ -705,9 +1155,11 @@ fun SettingsSwitchItem(
 
         Spacer(modifier = Modifier.width(16.dp))
 
-        if (onClickTrailing != null) {
+        if (trailingSlot != null) {
+            trailingSlot()
+        } else if (onClickTrailing != null) {
             IconButton(onClick = onClickTrailing) {
-                Icon(Icons.Outlined.Map, contentDescription = "Pick location")
+                Icon(trailingIcon, contentDescription = trailingContentDescription)
             }
         }
 
@@ -735,6 +1187,106 @@ fun SettingsDivider(glassBorder: Color) {
         color = glassBorder,
         thickness = 0.5.dp
     )
+}
+
+// ---------------------------------------------------------------------------
+//  居中弹出菜单/设置面板 (玻璃拟态卡片 + 系统居中, 点遮罩或返回键关闭)
+//  比 DropdownMenu 更醒目、更像独立设置页; 供「位置追踪设置」等按钮复用。
+// ---------------------------------------------------------------------------
+@Composable
+fun CenteredPanelDialog(
+    onDismissRequest: () -> Unit,
+    title: String,
+    subtitle: String? = null,
+    content: @Composable () -> Unit
+) {
+    val isDark = androidx.compose.foundation.isSystemInDarkTheme()
+    val glass = if (isDark) Color(0xF21E293B) else Color(0xF2FFFFFF)
+    val stroke = if (isDark) Color(0x44FFFFFF) else Color(0x14000000)
+    val titleColor = if (isDark) Color.White else Color(0xFF1E293B)
+    val subColor = if (isDark) Color.White.copy(alpha = 0.6f) else Color(0xFF64748B)
+
+    Dialog(onDismissRequest = onDismissRequest) {
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = glass,
+            border = BorderStroke(1.dp, stroke),
+            shadowElevation = 16.dp,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(22.dp)) {
+                Text(title, color = titleColor, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                if (subtitle != null) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(subtitle, color = subColor, fontSize = 12.sp)
+                }
+                Spacer(Modifier.height(14.dp))
+                content()
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  位置追踪弹出菜单内容: 「手动位置追踪」开关
+//   开启后进入个人主页不再自动后台解算, 只有点击「追踪」按钮才发起解算。
+//   读写同一个 switch_track_manual 配置键 (与 TrackHook 跨进程同步)。
+//   文案/颜色跟随系统深浅色, 在居中面板内显示清晰。
+// ---------------------------------------------------------------------------
+@Composable
+private fun TrackManualMenuContent() {
+    val isDark = androidx.compose.foundation.isSystemInDarkTheme()
+    val titleColor = if (isDark) Color.White else Color(0xFF1E293B)
+    val subColor = if (isDark) Color.White.copy(alpha = 0.6f) else Color(0xFF64748B)
+    val rowBg = if (isDark) Color.Black.copy(alpha = 0.25f) else Color(0xFF0F172A).copy(alpha = 0.04f)
+
+    var manual by rememberConfigBoolean("switch_track_manual", false)
+    val haptic = LocalHapticFeedback.current
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = rowBg,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    manual = !manual
+                }
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("手动位置追踪", color = titleColor, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(modifier = Modifier.height(3.dp))
+                Text(
+                    text = if (manual)
+                        "已开启：进入主页不自动解算，点击「追踪」按钮才发起解算"
+                    else
+                        "已关闭：进入主页即自动后台解算目标位置",
+                    color = subColor,
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Switch(
+                checked = manual,
+                onCheckedChange = {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    manual = it
+                },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color.White,
+                    checkedTrackColor = Color(0xFF34C759),
+                    uncheckedTrackColor = Color.Gray.copy(alpha = 0.2f),
+                    uncheckedThumbColor = Color.White,
+                    uncheckedBorderColor = Color.Transparent
+                )
+            )
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

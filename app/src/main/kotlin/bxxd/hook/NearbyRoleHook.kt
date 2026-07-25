@@ -13,6 +13,18 @@ import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
 import de.robv.android.xposed.callbacks.XC_LoadPackage
 
+/**
+ * ============================================================================
+ *  附近列表「属性透视」标签注入 (NearbyRoleHook)
+ * ============================================================================
+ *  开关: 随 BaseQuickAdapter.onBindViewHolder 常驻 (无独立开关, 轻量只读)。
+ *
+ *  在附近列表大图模式 item 的 ll_basic_info (年龄/身高/体重 那一行) 后追加:
+ *    分隔线 + role 角色标签 (llhook_nearby_role_tag)。
+ *
+ *  数据来源: UserFindResult (extends UserBasicModel) 字段 role:String (反射读取)。
+ * ============================================================================
+ */
 object NearbyRoleHook : BaseHook {
 
     private const val TAG = "llhook-NearbyRole"
@@ -20,7 +32,6 @@ object NearbyRoleHook : BaseHook {
 
     override fun init(lpparam: XC_LoadPackage.LoadPackageParam) {
         try {
-            // 监听底层通用的列表适配器
             val baseAdapterClass = lpparam.classLoader.loadClass("com.chad.library.adapter.base.BaseQuickAdapter")
 
             baseAdapterClass.findMethod { name == "onBindViewHolder" && parameterTypes.size == 2 }.hookAfter { param ->
@@ -29,18 +40,14 @@ object NearbyRoleHook : BaseHook {
                     val holder = param.args[0]
                     val position = param.args[1] as Int
 
-                    // 获取当前列表项的数据模型
                     val item = XposedHelpers.callMethod(adapter, "getItem", position) ?: return@hookAfter
                     val roleRaw = XposedHelpers.getObjectField(item, "role") as? String
                     if (roleRaw.isNullOrEmpty()) return@hookAfter
 
                     val itemView = XposedHelpers.getObjectField(holder, "itemView") as View
-                    
-                    // 调用官方代码，把数字 (1, 0.5) 翻译成汉字
                     val roleDisplay = resolveRoleName(itemView.context, roleRaw)
 
                     val adapterClassName = adapter.javaClass.name
-                    // 判断是大图列表模式还是小图宫格模式，分别注入
                     if (adapterClassName.contains("PeopleList")) {
                         injectRoleToListItem(holder, roleDisplay)
                     } else if (adapterClassName.contains("PeopleGrid")) {
@@ -49,30 +56,28 @@ object NearbyRoleHook : BaseHook {
                 } catch (_: Throwable) {}
             }
 
-            XposedBridge.log("$TAG Hook BaseQuickAdapter.onBindViewHolder 成功 (属性标签注入完毕)")
+            XposedBridge.log("$TAG Hook BaseQuickAdapter.onBindViewHolder 成功 (角色标签注入完毕)")
         } catch (t: Throwable) {
             XposedBridge.log("$TAG 属性标签 UI 注入失败: $t")
         }
     }
 
-    // 列表模式 (大图) 的 UI 注入逻辑
+    // 列表模式 (大图): role 标签
     private fun injectRoleToListItem(holder: Any, role: String) {
         val itemView = XposedHelpers.getObjectField(holder, "itemView") as View
         val context = itemView.context
 
+        // 锚点: ll_basic_info_weight / tv_basic_info_weight
         val weightContainerId = context.resources.getIdentifier("ll_basic_info_weight", "id", context.packageName)
-        val targetView = if (weightContainerId != 0) {
-            itemView.findViewById<View>(weightContainerId)
-        } else null
-
+        val targetView = if (weightContainerId != 0) itemView.findViewById<View>(weightContainerId) else null
         val anchor = targetView ?: run {
             val weightId = context.resources.getIdentifier("tv_basic_info_weight", "id", context.packageName)
             if (weightId == 0) return
             itemView.findViewById<View>(weightId)
         } ?: return
-
         val parent = anchor.parent as? ViewGroup ?: return
 
+        // ===== ① role 标签 (分隔线 + 文本) =====
         var roleView = parent.findViewWithTag<TextView>(ROLE_TAG_KEY)
         if (roleView == null) {
             val splitLineId = context.resources.getIdentifier("shape_split_line_path", "drawable", context.packageName)
@@ -97,12 +102,11 @@ object NearbyRoleHook : BaseHook {
             parent.addView(splitLine, anchorIndex + 1)
             parent.addView(roleView, anchorIndex + 2)
         }
-
         roleView.text = role
         roleView.visibility = View.VISIBLE
     }
 
-    // 宫格模式 (小图) 的 UI 注入逻辑
+    // 宫格模式 (小图) 的 role 标签注入逻辑
     private fun injectRoleToGridItem(holder: Any, role: String) {
         val itemView = XposedHelpers.getObjectField(holder, "itemView") as View
         val context = itemView.context
@@ -119,7 +123,7 @@ object NearbyRoleHook : BaseHook {
                 textSize = 9f
                 setTextColor(Color.WHITE)
                 background = GradientDrawable().apply {
-                    setColor(0xFF6D00FF.toInt()) // 显眼的紫色标签
+                    setColor(0xFF6D00FF.toInt())
                     cornerRadius = 6f
                 }
                 setPadding(4, 0, 4, 0)
@@ -153,7 +157,7 @@ object NearbyRoleHook : BaseHook {
         return (dp * context.resources.displayMetrics.density).toInt()
     }
 
-    // 调用官方翻译器：把底层数字 1 翻译成 "1" 或者其他显示文字
+    // 调用官方翻译器：把底层角色数字翻译成显示文字
     private fun resolveRoleName(context: android.content.Context, roleRaw: String): String {
         try {
             for (className in arrayOf(

@@ -39,6 +39,9 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlin.concurrent.thread
+import android.text.SpannableString
+import android.text.style.ForegroundColorSpan
+import android.text.style.StrikethroughSpan
 
 object Ban2Hook : BaseHook {
 
@@ -47,6 +50,8 @@ object Ban2Hook : BaseHook {
 
     // 已拦截(强制保留在聊天列表)的 uid 集合, 用于在 Blued 原生消息列表显示"已拦截"角标
     private val interceptedDisplaySet = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+    // uid → 来源标记 (消失/风险/诈骗…), 用于消息列表角标区分显示标签
+    private val uidSourceMap = java.util.Collections.synchronizedMap(mutableMapOf<String, String>())
     // 标记是否已从磁盘懒加载过拦截集合
     private var displaySetLoaded = false
 
@@ -69,6 +74,7 @@ object Ban2Hook : BaseHook {
         if (uid == "0" || uid.isEmpty() || memoryInterceptedSet.contains(uid)) return
         memoryInterceptedSet.add(uid)
         interceptedDisplaySet.add(uid) // 同步加入显示集合, 供消息列表角标判断
+        uidSourceMap[uid] = source   // 同步来源, 供角标选标签
         thread {
             try {
                 val context = android.app.AndroidAppHelper.currentApplication() ?: return@thread
@@ -95,6 +101,33 @@ object Ban2Hook : BaseHook {
             } catch (e: Exception) {
                 Log.e("【蓝蓝hook】存储拦截记录异常: ${e.message}")
             }
+        }
+    }
+
+    /**
+     * 公开 API: 手动标记一个用户为风险/注销 (供聊天界面调用), 同步写入磁盘。
+     * @param source 消失/风险/诈骗/离线/手动 之一
+     */
+    fun markUser(ctx: Context, uid: String, name: String, source: String) {
+        if (uid.isEmpty() || uid == "0") return
+        memoryInterceptedSet.add(uid)
+        interceptedDisplaySet.add(uid)
+        uidSourceMap[uid] = source
+        try {
+            val sp = ctx.getSharedPreferences("llhook_risk_users", Context.MODE_PRIVATE)
+            val json = JSONObject(sp.getString("intercepted_uids_json", "{}") ?: "{}")
+            val exist = json.optJSONObject(uid)
+            val oldSrc = exist?.optString("source", "") ?: ""
+            val mergedSrc = if (oldSrc.isNotEmpty() && !oldSrc.contains(source)) "$oldSrc+$source" else source
+            json.put(uid, JSONObject().apply {
+                put("name", name.ifEmpty { exist?.optString("name", uid) ?: uid })
+                put("union_uid", exist?.optString("union_uid", "") ?: "")
+                put("source", mergedSrc)
+                put("time", System.currentTimeMillis())
+            })
+            sp.edit().putString("intercepted_uids_json", json.toString()).apply()
+        } catch (e: Exception) {
+            Log.e("【蓝蓝hook】手动标记异常: ${e.message}")
         }
     }
 
@@ -232,8 +265,28 @@ object Ban2Hook : BaseHook {
             val ctx = android.app.AndroidAppHelper.currentApplication() ?: return
             val sp = ctx.getSharedPreferences("llhook_risk_users", Context.MODE_PRIVATE)
             val json = JSONObject(sp.getString("intercepted_uids_json", "{}") ?: "{}")
-            json.keys().forEach { interceptedDisplaySet.add(it) }
+            json.keys().forEach { uid ->
+                interceptedDisplaySet.add(uid)
+                val src = json.optJSONObject(uid)?.optString("source", "") ?: ""
+                if (src.isNotEmpty()) uidSourceMap[uid] = src
+            }
         } catch (_: Throwable) {}
+    }
+
+    /** 根据 source 选标签文字 */
+    private fun labelForSource(source: String): String = when {
+        source.contains("消失") -> "已注销"
+        source.contains("诈骗") -> "诈骗"
+        source.contains("风险") -> "风险"
+        source.contains("离线") -> "离线"
+        else -> "已拦截"
+    }
+
+    /** 根据标签选颜色 (已注销=灰, 风险/诈骗=红) */
+    private fun colorForLabel(label: String): Int = when (label) {
+        "已注销", "离线" -> 0xFF9E9E9E.toInt()
+        "诈骗", "风险" -> 0xFFFF5252.toInt()
+        else -> 0xFFFFC107.toInt()
     }
 
     /** 递归收集 View 树里所有 TextView */
@@ -245,20 +298,30 @@ object Ban2Hook : BaseHook {
         }
     }
 
-    /** 给消息列表项追加"·已拦截"标记: 找字号最大的非数字 TextView(通常是昵称) */
-    private fun markInterceptedBadge(itemView: View) {
+    /** 给消息列表项追加角标: 找字号最大的非数字 TextView(通常是昵称), 按 uid 来源选标签+颜色 */
+    private fun markBadge(itemView: View, uid: String) {
         try {
+            val label = labelForSource(uidSourceMap[uid] ?: "")
+            val tag = " ·$label"
             val tvs = ArrayList<TextView>()
             collectTextViews(itemView, tvs)
             var bestTv: TextView? = null
             var bestSize = 0f
             for (tv in tvs) {
                 val t = tv.text?.toString() ?: ""
-                if (t.isEmpty() || t.contains("已拦截")) continue
-                if (t.matches(Regex("\\d.*"))) continue // 跳过时间/未读数等纯数字
+                // 跳过空/已标/纯数字(时间未读数)
+                if (t.isEmpty() || t.contains("·") && (t.contains("已注销") || t.contains("已拦截") ||
+                        t.contains("风险") || t.contains("诈骗") || t.contains("离线"))) continue
+                if (t.matches(Regex("\\d.*"))) continue
                 if (tv.textSize > bestSize) { bestSize = tv.textSize; bestTv = tv }
             }
-            bestTv?.let { it.text = "${it.text} ·已拦截" }
+            bestTv?.let {
+                val span = SpannableString("${it.text}$tag")
+                val color = colorForLabel(label)
+                span.setSpan(ForegroundColorSpan(color), span.length - label.length - 1, span.length, 0)
+                if (label == "已注销") span.setSpan(StrikethroughSpan(), span.length - label.length - 1, span.length, 0)
+                it.text = span
+            }
         } catch (_: Throwable) {}
     }
 
@@ -351,6 +414,7 @@ object Ban2Hook : BaseHook {
             val getViewHook = object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     try {
+                        if (!Config.isFeatureEnabled("switch_deleted_mark")) return@afterHookedMethod
                         // 懒加载: 首次渲染时从磁盘加载已拦截 uid
                         if (!displaySetLoaded) { loadDisplaySet(); displaySetLoaded = true }
                         if (interceptedDisplaySet.isEmpty()) return
@@ -363,7 +427,7 @@ object Ban2Hook : BaseHook {
                         var uid = runCatching { XposedHelpers.getLongField(data, "sessionId").toString() }.getOrDefault("0")
                         if (uid == "0") uid = runCatching { XposedHelpers.getObjectField(data, "uid")?.toString() ?: "0" }.getOrDefault("0")
                         if (uid == "0") return
-                        if (uid in interceptedDisplaySet) markInterceptedBadge(itemView)
+                        if (uid in interceptedDisplaySet) markBadge(itemView, uid)
                     } catch (_: Throwable) {}
                 }
             }
@@ -381,6 +445,49 @@ object Ban2Hook : BaseHook {
         } catch (e: Exception) {
             Log.e("【蓝蓝hook】消息列表角标 hook 失败: ${e.message}")
         }
+
+        // ================================================================
+        // 功能: 资料页提醒 — 打开已注销/风险用户资料页时 Toast 提示
+        //   hook UserInfoFragmentNew.onResume, 从 arguments 取 uid,
+        //   若命中拦截集合, 按来源弹 Toast (已注销/风险/诈骗)
+        // ================================================================
+        try {
+            val fragCls = lpparam.classLoader.loadClass("com.soft.blued.ui.user.fragment.UserInfoFragmentNew")
+            fragCls.findMethod { name == "onResume" }.hookAfter { p ->
+                if (!Config.isFeatureEnabled("switch_deleted_mark")) return@hookAfter
+                if (!displaySetLoaded) { loadDisplaySet(); displaySetLoaded = true }
+                if (interceptedDisplaySet.isEmpty()) return@hookAfter
+                try {
+                    val bundle = XposedHelpers.callMethod(p.thisObject, "getArguments") as? Bundle ?: return@hookAfter
+                    var uid = ""
+                    for (key in listOf("passby_session_id", "sessionId", "session_id", "uid", "target_uid")) {
+                        val v = bundle.get(key)?.toString()
+                        if (!v.isNullOrEmpty() && v != "0" && v.matches(Regex("\\d+"))) { uid = v; break }
+                    }
+                    if (uid.isEmpty() || uid == "0") {
+                        for (key in bundle.keySet()) {
+                            val v = bundle.get(key)?.toString() ?: ""
+                            if (v.matches(Regex("\\d{5,}"))) { uid = v; break }
+                        }
+                    }
+                    if (uid.isNotEmpty() && uid != "0" && uid in interceptedDisplaySet) {
+                        val label = labelForSource(uidSourceMap[uid] ?: "")
+                        val ctx = XposedHelpers.callMethod(p.thisObject, "getContext") as? Context
+                            ?: android.app.AndroidAppHelper.currentApplication()
+                        if (ctx != null) {
+                            val msg = when (label) {
+                                "已注销" -> "⚠ 该用户已注销账号"
+                                "诈骗" -> "⚠ 该用户有诈骗风险"
+                                "风险" -> "⚠ 该用户为风险用户"
+                                "离线" -> "⚠ 该用户长期离线"
+                                else -> "⚠ 该用户已被标记"
+                            }
+                            Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
+                        }
+                    }
+                } catch (_: Throwable) {}
+            }
+        } catch (_: Throwable) {}
 
         try {
             val activityClass = lpparam.classLoader.loadClass("android.app.Activity")
@@ -471,7 +578,10 @@ object Ban2Hook : BaseHook {
                 val myUid = XposedHelpers.callMethod(loginUserInfo, "getUid") as? String
                 
                 if (accessToken.isNullOrEmpty() || myUid.isNullOrEmpty()) {
-                    activity.runOnUiThread { Toast.makeText(activity, "获取凭证失败", Toast.LENGTH_SHORT).show() }
+                    activity.runOnUiThread {
+                        Toast.makeText(activity, "获取凭证失败", Toast.LENGTH_SHORT).show()
+                        onComplete(false)   // ★ 必须回调, 否则调用方永远收不到结果 (会漏掉解黑)
+                    }
                     return@thread
                 }
                 
@@ -862,15 +972,26 @@ object Ban2Hook : BaseHook {
                 val uid = it.first
                 val name = it.second.optString("name", uid)
                 val src = it.second.optString("source", "")
-                val srcTag = if (src.isNotEmpty()) "[$src]" else ""
+                val srcTag = if (src.isNotEmpty()) "[${labelForSource(src)}]" else ""
                 if (name == uid) "$uid $srcTag".trim() else "$name (UID: $uid) $srcTag".trim()
             }
             adapter = object : ArrayAdapter<String>(activity, android.R.layout.simple_list_item_1, displayList) {
                 override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
                     val view = super.getView(position, convertView, parent) as TextView
-                    view.setTextColor(Color.parseColor(colorText))
                     view.textSize = 14f
                     view.setPadding(dp2px(10), dp2px(16), dp2px(10), dp2px(16))
+                    // 给末尾 [标签] 上色
+                    val raw = displayList[position]
+                    val tagStart = raw.lastIndexOf('[')
+                    if (tagStart >= 0 && raw.endsWith("]")) {
+                        val label = raw.substring(tagStart + 1, raw.length - 1)
+                        val span = SpannableString(raw)
+                        span.setSpan(ForegroundColorSpan(colorForLabel(label)), tagStart, raw.length, 0)
+                        view.text = span
+                    } else {
+                        view.text = raw
+                        view.setTextColor(Color.parseColor(colorText))
+                    }
                     return view
                 }
             }

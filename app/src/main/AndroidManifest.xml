@@ -65,6 +65,14 @@
             </intent-filter>
         </activity>
 
+        <!-- 透明选图 Activity: 宿主注入的 Compose 面板无法用 ActivityResult, 由它代选 -->
+        <activity
+            android:name=".ImagePickerActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:excludeFromRecents="true"
+            android:noHistory="true" />
+
         <!-- 进程保活前台服务 (运行在模块 APK 自身进程, 独立于 Blued) -->
         <service
             android:name="bxxd.hook.KeepAliveService"
