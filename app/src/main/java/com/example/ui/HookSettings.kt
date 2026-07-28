@@ -704,37 +704,37 @@ fun SettingsContent(hostActivity: Activity?, inHost: Boolean, panelMode: Boolean
                         if (inHost && hostActivity != null) {
                             val activity = hostActivity!!
                             SettingsDivider(glassBorder)
-                            ToolRow("🔍 设备检测 (Blued 视角)", "查看 Blued 采集的设备数据与风控", Icons.Outlined.BugReport, subTextColor) {
+                            ToolRow("设备检测 (Blued 视角)", "查看 Blued 采集的设备数据与风控", Icons.Outlined.BugReport, subTextColor) {
                                 try { showHostComposeScreen(activity) { onClose -> DetectScreen(activity, onClose) } }
                                 catch (e: Throwable) { Toast.makeText(activity, "检测页唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
                             }
                             SettingsDivider(glassBorder)
-                            ToolRow("👥 用户列表", "已收集 ${AutoVisitHook.cachedUsers.size} 名附近用户 · 点击查看", Icons.Outlined.Group, subTextColor) {
+                            ToolRow("用户列表", "已收集 ${AutoVisitHook.cachedUsers.size} 名附近用户 · 点击查看", Icons.Outlined.Group, subTextColor) {
                                 try { showHostComposeScreen(activity) { onClose -> NearbyUsersScreen(activity, onClose) } }
                                 catch (e: Throwable) { Toast.makeText(activity, "用户列表唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
                             }
                             SettingsDivider(glassBorder)
-                            ToolRow("🌐 网络抓包查看器", "实时记录解密明文 · 自动解密 en_data · 改 UA 重放", Icons.Outlined.NetworkCheck, subTextColor) {
+                            ToolRow("网络抓包查看器", "实时记录解密明文 · 自动解密 en_data · 改 UA 重放", Icons.Outlined.NetworkCheck, subTextColor) {
                                 try { showHostComposeScreen(activity) { onClose -> NetworkCaptureScreen(activity, onClose) } }
                                 catch (e: Throwable) { Toast.makeText(activity, "抓包页唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
                             }
                             SettingsDivider(glassBorder)
-                            ToolRow("🔓 endata 解密器", "手动粘贴 en_data 加密数据 → 还原明文 (AES-GCM)", Icons.Outlined.EnhancedEncryption, subTextColor) {
+                            ToolRow("endata 解密器", "手动粘贴 en_data 加密数据 → 还原明文 (AES-GCM)", Icons.Outlined.EnhancedEncryption, subTextColor) {
                                 try { showHostComposeScreen(activity) { onClose -> EndataDecryptScreen(activity, onClose) } }
                                 catch (e: Throwable) { Toast.makeText(activity, "解密器唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
                             }
                             SettingsDivider(glassBorder)
-                            ToolRow("🚫 屏蔽广告接口", "自定义广告/追踪接口黑名单 · 逐条开关 · 导入导出", Icons.Outlined.Block, subTextColor) {
+                            ToolRow("屏蔽广告接口", "自定义广告/追踪接口黑名单 · 逐条开关 · 导入导出", Icons.Outlined.Block, subTextColor) {
                                 try { showHostComposeScreen(activity) { onClose -> AdApiBlockScreen(activity, onClose) } }
                                 catch (e: Throwable) { Toast.makeText(activity, "广告接口黑名单唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
                             }
                             SettingsDivider(glassBorder)
-                            ToolRow("🔑 凭证与运行状态", "Authorization / UA / 坐标 / API Key 查看", Icons.Outlined.VpnKey, subTextColor) {
+                            ToolRow("凭证与运行状态", "Authorization / UA / 坐标 / API Key 查看", Icons.Outlined.VpnKey, subTextColor) {
                                 try { showHostComposeScreen(activity) { onClose -> CredentialViewerScreen(activity, onClose) } }
                                 catch (e: Throwable) { Toast.makeText(activity, "凭证页唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
                             }
                             SettingsDivider(glassBorder)
-                            ToolRow("🗑 清理角色缓存并重启", "粉碎 mmkv 角色缓存后重启宿主", Icons.Outlined.DeleteSweep, subTextColor) {
+                            ToolRow("清理角色缓存并重启", "粉碎 mmkv 角色缓存后重启宿主", Icons.Outlined.DeleteSweep, subTextColor) {
                                 val ok = MmkvCacheClearHook.clearMmkvCache(activity)
                                 Toast.makeText(activity, if (ok) "缓存已粉碎, 正在重启..." else "无旧缓存, 直接重启...", Toast.LENGTH_SHORT).show()
                                 FloatingUI.restartHostApp(activity)
@@ -866,32 +866,32 @@ private fun ToolsSection(
     // 阶段 2 完成: 所有工具按钮点击直接弹 llhook Compose 全屏页 (showHostComposeScreen),
     // 不再需要 HostToolDialog 中间状态机。
     SettingsSection("工具 (Blued 内)", glassColor, glassBorder, subTextColor) {
-        ToolRow("🛡 风控用户列表", "拦截记录 / 手动收藏 / 拉黑 / 跳转", Icons.Outlined.Shield, subTextColor) {
+        ToolRow("拦截用户列表", "拦截记录 / 手动收藏 / 拉黑 / 跳转", Icons.Outlined.Shield, subTextColor) {
             try { showHostComposeScreen(activity) { onClose -> RiskUsersScreen(activity, onClose) } }
-            catch (e: Throwable) { Toast.makeText(activity, "风控列表唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
+            catch (e: Throwable) { Toast.makeText(activity, "拦截列表唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
         }
         SettingsDivider(glassBorder)
-        ToolRow("🔒 秘密相册", "闪照/照片自动入库 · 物理隐身", Icons.Outlined.PhotoLibrary, subTextColor) {
+        ToolRow("秘密相册", "闪照/照片自动入库 · 物理隐身", Icons.Outlined.PhotoLibrary, subTextColor) {
             try { showHostComposeScreen(activity) { onClose -> SecretAlbumScreen(activity, onClose = onClose) } }
             catch (e: Throwable) { Toast.makeText(activity, "秘密相册唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
         }
         SettingsDivider(glassBorder)
-        ToolRow("💾 聊天备份与恢复", "备份/恢复 Blued 聊天数据库", Icons.Outlined.Backup, subTextColor) {
+        ToolRow("聊天备份与恢复", "备份/恢复 Blued 聊天数据库", Icons.Outlined.Backup, subTextColor) {
             try { showHostComposeScreen(activity) { onClose -> ChatBackupScreen(activity, onClose) } }
             catch (e: Throwable) { Toast.makeText(activity, "备份页唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
         }
         SettingsDivider(glassBorder)
-        ToolRow("🔖 坐标收藏夹管理", "批量管理 / 一键设为虚拟定位 / 导入导出", Icons.Outlined.Bookmark, subTextColor) {
+        ToolRow("坐标收藏夹管理", "批量管理 / 一键设为虚拟定位 / 导入导出", Icons.Outlined.Bookmark, subTextColor) {
             try { showHostComposeScreen(activity) { onClose -> FavoritesScreen(activity, onClose) } }
             catch (e: Throwable) { Toast.makeText(activity, "收藏夹页唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
         }
         SettingsDivider(glassBorder)
-        ToolRow("⚡ 一键站街", "按距离/在线批量访问", Icons.Outlined.Bolt, subTextColor) {
+        ToolRow("一键站街", "按距离/在线批量访问", Icons.Outlined.Bolt, subTextColor) {
             try { showHostComposeScreen(activity) { onClose -> AutoVisitScreen(activity, onClose) } }
             catch (e: Throwable) { Toast.makeText(activity, "站街页唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
         }
         SettingsDivider(glassBorder)
-        ToolRow("⛔ 停止站街", "中止正在进行的批量访问", Icons.Outlined.StopCircle, subTextColor) {
+        ToolRow("停止站街", "中止正在进行的批量访问", Icons.Outlined.StopCircle, subTextColor) {
             if (AutoVisitHook.isVisiting) {
                 AutoVisitHook.stopAutoVisit()
                 Toast.makeText(activity, "已下达停止站街指令", Toast.LENGTH_SHORT).show()
