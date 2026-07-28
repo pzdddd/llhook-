@@ -35,8 +35,10 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import bxxd.hook.AutoVisitHook
 import bxxd.hook.ChatBackupManager
 import bxxd.hook.Config
@@ -292,7 +294,7 @@ fun SettingsContent(hostActivity: Activity?, inHost: Boolean, panelMode: Boolean
                         }
                         var switchLite by rememberConfigBoolean("switch_lite")
                         var riskBlock by rememberConfigBoolean("switch_risk_user_block")
-                        var spoofLite by rememberConfigBoolean("switch_spoof_lite")
+                        var spoofLite by rememberConfigBoolean(bxxd.hook.NetworkSpoofHook.KEY_ENABLED)
 
                         SettingsSwitchItem("一键 lite (减负提速)", "精简不必要的功能和服务", Icons.Outlined.Speed,
                             switchLite, { switchLite = it }, textColor, subTextColor)
@@ -300,8 +302,10 @@ fun SettingsContent(hostActivity: Activity?, inHost: Boolean, panelMode: Boolean
                         SettingsSwitchItem("风险用户拦截", "自动识别并屏蔽风险用户", Icons.Outlined.Shield,
                             riskBlock, { riskBlock = it }, textColor, subTextColor)
                         SettingsDivider(glassBorder)
-                        SettingsSwitchItem("属性透视", "伪装极速版网络获取更多数据", Icons.Outlined.Visibility,
-                            spoofLite, { spoofLite = it }, textColor, subTextColor)
+                        SettingsSwitchItem("属性透视", "联网查详情接口为附近/在线列表补全真实 role (不影响 IP/访客/闪照)",
+                            Icons.Outlined.Visibility,
+                            spoofLite, { spoofLite = it }, textColor, subTextColor
+                        )
                     }
                 }
 
@@ -537,6 +541,7 @@ fun SettingsContent(hostActivity: Activity?, inHost: Boolean, panelMode: Boolean
                         var nearbySort by rememberConfigBoolean("switch_nearby_sort", false)
                         var screenshot by rememberConfigBoolean("switch_screenshot", false)
                         var stealthRead by rememberConfigBoolean("switch_read_receipt", false)
+                        var secretViewAll by rememberConfigBoolean("switch_secret_view_all", false)
                         var chatWatermark by rememberConfigBoolean("switch_chat_watermark", true)
                         var deletedMark by rememberConfigBoolean("switch_deleted_mark", true)
                         var msgTimestamp by rememberConfigBoolean("switch_msg_timestamp", false)
@@ -564,6 +569,9 @@ fun SettingsContent(hostActivity: Activity?, inHost: Boolean, panelMode: Boolean
                         SettingsDivider(glassBorder)
                         SettingsSwitchItem("消息已读防隐身", "即使对方开启隐藏已读, 依然显示", Icons.Outlined.MarkChatRead,
                             stealthRead, { stealthRead = it }, textColor, subTextColor)
+                        SettingsDivider(glassBorder)
+                        SettingsSwitchItem("悄悄查看所有消息", "查看消息后对方聊天界面不显示已读 (长按消息页顶部「聊天」Tab 可快捷开关)", Icons.Outlined.Visibility,
+                            secretViewAll, { secretViewAll = it }, textColor, subTextColor)
                         SettingsDivider(glassBorder)
                         SettingsSwitchItem("已注销/风险用户标记", "对方注销账号/风险用户时, 消息列表名字旁显示已注销·风险·诈骗标记, 打开资料页弹提示", Icons.Outlined.PersonOff,
                             deletedMark, { deletedMark = it }, textColor, subTextColor)
@@ -644,15 +652,23 @@ fun SettingsContent(hostActivity: Activity?, inHost: Boolean, panelMode: Boolean
                     }
                 }
 
-                // ====== 消息推送 / 保活 ======
+                // ====== 实验性功能 (消息推送/保活 + 风控控制 + 调试诊断工具, 折叠收纳) ======
                 AnimatedVisibility(visible, enter = fadeIn(tween(500, delayMillis = 290)) + slideInVertically(tween(500, delayMillis = 290)) { 100 }) {
-                    SettingsSection("消息推送 / 保活", glassColor, glassBorder, subTextColor) {
+                    SettingsFolder(
+                        title = "实验性功能",
+                        subtitle = "消息推送 / 保活 · 设备风控 · 抓包解密等进阶与诊断工具",
+                        icon = Icons.Outlined.Science,
+                        glassColor = glassColor,
+                        glassBorder = glassBorder,
+                        textColor = textColor,
+                        subTextColor = subTextColor
+                    ) {
+                        // —— 消息推送 / 保活 ——
                         var forcePush by rememberConfigBoolean("switch_force_push", false)
                         var forcePushGroup by rememberConfigBoolean("switch_force_push_group", false)
                         var pushTakeover by rememberConfigBoolean("switch_push_takeover", false)
                         var keepAlive by rememberConfigBoolean("switch_keep_alive", false)
                         var keepAliveRelaunch by rememberConfigBoolean("switch_keep_alive_relaunch", false)
-
                         SettingsSwitchItem("强制消息推送 (私聊)", "手机收不到 Blued 推送时打开", Icons.Outlined.NotificationsActive,
                             forcePush, { forcePush = it }, textColor, subTextColor)
                         SettingsDivider(glassBorder)
@@ -667,24 +683,63 @@ fun SettingsContent(hostActivity: Activity?, inHost: Boolean, panelMode: Boolean
                         SettingsDivider(glassBorder)
                         SettingsSwitchItem("└ 断开后自动重开 Blued", "保活心跳超时自动拉起", Icons.Outlined.RestartAlt,
                             keepAliveRelaunch, { keepAliveRelaunch = it }, textColor, subTextColor)
-                    }
-                }
 
-                // ====== 风控控制 (「我的」入口与桌面图标显示) ======
-                if (mineEntry || !inHost) AnimatedVisibility(visible, enter = fadeIn(tween(500, delayMillis = 320)) + slideInVertically(tween(500, delayMillis = 320)) { 100 }) {
-                    SettingsSection("风控控制\n（非必要别打开。仅登录提示风险时尝试。）", glassColor, glassBorder, subTextColor) {
-                        var deviceFake by rememberConfigBoolean("switch_device_fake", false)
-                        var deviceEmpty by rememberConfigBoolean("switch_device_empty", false)
-                        var deviceIntercept by rememberConfigBoolean("switch_device_intercept", false)
+                        // —— 风控控制 (保留原可见性: 「我的」入口或桌面端才显示) ——
+                        if (mineEntry || !inHost) {
+                            var deviceFake by rememberConfigBoolean("switch_device_fake", false)
+                            var deviceEmpty by rememberConfigBoolean("switch_device_empty", false)
+                            var deviceIntercept by rememberConfigBoolean("switch_device_intercept", false)
+                            SettingsDivider(glassBorder)
+                            SettingsSwitchItem("伪装设备指纹", "反射篡改数美 SmAntiFraud 指纹", Icons.Outlined.Fingerprint,
+                                deviceFake, { deviceFake = it }, textColor, subTextColor)
+                            SettingsDivider(glassBorder)
+                            SettingsSwitchItem("清空返回值", "getDeviceId 等直接置空", Icons.Outlined.NoEncryption,
+                                deviceEmpty, { deviceEmpty = it }, textColor, subTextColor)
+                            SettingsDivider(glassBorder)
+                            SettingsSwitchItem("拦截机器码上传", "阻断设备信息上传请求", Icons.Outlined.Block,
+                                deviceIntercept, { deviceIntercept = it }, textColor, subTextColor)
+                        }
 
-                        SettingsSwitchItem("伪装设备指纹", "反射篡改数美 SmAntiFraud 指纹", Icons.Outlined.Fingerprint,
-                            deviceFake, { deviceFake = it }, textColor, subTextColor)
-                        SettingsDivider(glassBorder)
-                        SettingsSwitchItem("清空返回值", "getDeviceId 等直接置空", Icons.Outlined.NoEncryption,
-                            deviceEmpty, { deviceEmpty = it }, textColor, subTextColor)
-                        SettingsDivider(glassBorder)
-                        SettingsSwitchItem("拦截机器码上传", "阻断设备信息上传请求", Icons.Outlined.Block,
-                            deviceIntercept, { deviceIntercept = it }, textColor, subTextColor)
+                        // —— 调试 / 诊断工具 (仅 Blued 内, 依赖宿主 Activity) ——
+                        if (inHost && hostActivity != null) {
+                            val activity = hostActivity!!
+                            SettingsDivider(glassBorder)
+                            ToolRow("🔍 设备检测 (Blued 视角)", "查看 Blued 采集的设备数据与风控", Icons.Outlined.BugReport, subTextColor) {
+                                try { showHostComposeScreen(activity) { onClose -> DetectScreen(activity, onClose) } }
+                                catch (e: Throwable) { Toast.makeText(activity, "检测页唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
+                            }
+                            SettingsDivider(glassBorder)
+                            ToolRow("👥 用户列表", "已收集 ${AutoVisitHook.cachedUsers.size} 名附近用户 · 点击查看", Icons.Outlined.Group, subTextColor) {
+                                try { showHostComposeScreen(activity) { onClose -> NearbyUsersScreen(activity, onClose) } }
+                                catch (e: Throwable) { Toast.makeText(activity, "用户列表唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
+                            }
+                            SettingsDivider(glassBorder)
+                            ToolRow("🌐 网络抓包查看器", "实时记录解密明文 · 自动解密 en_data · 改 UA 重放", Icons.Outlined.NetworkCheck, subTextColor) {
+                                try { showHostComposeScreen(activity) { onClose -> NetworkCaptureScreen(activity, onClose) } }
+                                catch (e: Throwable) { Toast.makeText(activity, "抓包页唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
+                            }
+                            SettingsDivider(glassBorder)
+                            ToolRow("🔓 endata 解密器", "手动粘贴 en_data 加密数据 → 还原明文 (AES-GCM)", Icons.Outlined.EnhancedEncryption, subTextColor) {
+                                try { showHostComposeScreen(activity) { onClose -> EndataDecryptScreen(activity, onClose) } }
+                                catch (e: Throwable) { Toast.makeText(activity, "解密器唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
+                            }
+                            SettingsDivider(glassBorder)
+                            ToolRow("🚫 屏蔽广告接口", "自定义广告/追踪接口黑名单 · 逐条开关 · 导入导出", Icons.Outlined.Block, subTextColor) {
+                                try { showHostComposeScreen(activity) { onClose -> AdApiBlockScreen(activity, onClose) } }
+                                catch (e: Throwable) { Toast.makeText(activity, "广告接口黑名单唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
+                            }
+                            SettingsDivider(glassBorder)
+                            ToolRow("🔑 凭证与运行状态", "Authorization / UA / 坐标 / API Key 查看", Icons.Outlined.VpnKey, subTextColor) {
+                                try { showHostComposeScreen(activity) { onClose -> CredentialViewerScreen(activity, onClose) } }
+                                catch (e: Throwable) { Toast.makeText(activity, "凭证页唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
+                            }
+                            SettingsDivider(glassBorder)
+                            ToolRow("🗑 清理角色缓存并重启", "粉碎 mmkv 角色缓存后重启宿主", Icons.Outlined.DeleteSweep, subTextColor) {
+                                val ok = MmkvCacheClearHook.clearMmkvCache(activity)
+                                Toast.makeText(activity, if (ok) "缓存已粉碎, 正在重启..." else "无旧缓存, 直接重启...", Toast.LENGTH_SHORT).show()
+                                FloatingUI.restartHostApp(activity)
+                            }
+                        }
                     }
                 }
 
@@ -693,11 +748,6 @@ fun SettingsContent(hostActivity: Activity?, inHost: Boolean, panelMode: Boolean
                     AnimatedVisibility(visible, enter = fadeIn(tween(500, delayMillis = 350)) + slideInVertically(tween(500, delayMillis = 350)) { 100 }) {
                         ToolsSection(hostActivity, glassColor, glassBorder, subTextColor)
                     }
-                }
-
-                // ====== 备份目录 ======
-                AnimatedVisibility(visible, enter = fadeIn(tween(500, delayMillis = 380)) + slideInVertically(tween(500, delayMillis = 380)) { 100 }) {
-                    BackupDirSection(glassColor, glassBorder, textColor, subTextColor)
                 }
 
                 Spacer(modifier = Modifier.height(32.dp))
@@ -816,44 +866,27 @@ private fun ToolsSection(
     // 阶段 2 完成: 所有工具按钮点击直接弹 llhook Compose 全屏页 (showHostComposeScreen),
     // 不再需要 HostToolDialog 中间状态机。
     SettingsSection("工具 (Blued 内)", glassColor, glassBorder, subTextColor) {
-        ToolRow("🔍 设备检测 (Blued 视角)", "查看 Blued 采集的设备数据与风控", Icons.Outlined.BugReport, subTextColor) {
-            // 阶段 2 已完成: 直接弹 Compose 全屏检测报告页
-            try { showHostComposeScreen(activity) { onClose -> DetectScreen(activity, onClose) } }
-            catch (e: Throwable) { Toast.makeText(activity, "检测页唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
-        }
-        SettingsDivider(glassBorder)
         ToolRow("🛡 风控用户列表", "拦截记录 / 手动收藏 / 拉黑 / 跳转", Icons.Outlined.Shield, subTextColor) {
-            // 阶段 2 已完成: 直接弹 Compose 全屏风控用户列表页
             try { showHostComposeScreen(activity) { onClose -> RiskUsersScreen(activity, onClose) } }
             catch (e: Throwable) { Toast.makeText(activity, "风控列表唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
         }
         SettingsDivider(glassBorder)
         ToolRow("🔒 秘密相册", "闪照/照片自动入库 · 物理隐身", Icons.Outlined.PhotoLibrary, subTextColor) {
-            // 阶段 2 已完成: 弹 Compose 全屏秘密相册页 (总览模式)
             try { showHostComposeScreen(activity) { onClose -> SecretAlbumScreen(activity, onClose = onClose) } }
             catch (e: Throwable) { Toast.makeText(activity, "秘密相册唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
         }
         SettingsDivider(glassBorder)
         ToolRow("💾 聊天备份与恢复", "备份/恢复 Blued 聊天数据库", Icons.Outlined.Backup, subTextColor) {
-            // 阶段 2 已完成: 直接弹 Compose 全屏备份页
             try { showHostComposeScreen(activity) { onClose -> ChatBackupScreen(activity, onClose) } }
             catch (e: Throwable) { Toast.makeText(activity, "备份页唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
         }
         SettingsDivider(glassBorder)
-        ToolRow("👥 用户列表", "已收集 ${AutoVisitHook.cachedUsers.size} 名附近用户 · 点击查看", Icons.Outlined.Group, subTextColor) {
-            // 「一键站街」(AutoVisitHook) 拦截 Gson.fromJson 抓取的附近用户缓存, 此处展示
-            try { showHostComposeScreen(activity) { onClose -> NearbyUsersScreen(activity, onClose) } }
-            catch (e: Throwable) { Toast.makeText(activity, "用户列表唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
-        }
-        SettingsDivider(glassBorder)
         ToolRow("🔖 坐标收藏夹管理", "批量管理 / 一键设为虚拟定位 / 导入导出", Icons.Outlined.Bookmark, subTextColor) {
-            // 新功能: 独立管理地图收藏夹 (CRUD + 一键设为虚拟定位)
             try { showHostComposeScreen(activity) { onClose -> FavoritesScreen(activity, onClose) } }
             catch (e: Throwable) { Toast.makeText(activity, "收藏夹页唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
         }
         SettingsDivider(glassBorder)
         ToolRow("⚡ 一键站街", "按距离/在线批量访问", Icons.Outlined.Bolt, subTextColor) {
-            // 阶段 2 已完成: 直接弹 Compose 全屏站街配置页
             try { showHostComposeScreen(activity) { onClose -> AutoVisitScreen(activity, onClose) } }
             catch (e: Throwable) { Toast.makeText(activity, "站街页唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
         }
@@ -866,30 +899,6 @@ private fun ToolsSection(
                 Toast.makeText(activity, "当前未在站街", Toast.LENGTH_SHORT).show()
             }
         }
-        SettingsDivider(glassBorder)
-        ToolRow("🌐 网络抓包查看器", "实时记录 Blued 解密明文 API 响应", Icons.Outlined.NetworkCheck, subTextColor) {
-            // 新功能: 捕获/浏览 Blued 解密后的明文 API 响应 (hook AES-GCM 解密函数)
-            try { showHostComposeScreen(activity) { onClose -> NetworkCaptureScreen(activity, onClose) } }
-            catch (e: Throwable) { Toast.makeText(activity, "抓包页唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
-        }
-        SettingsDivider(glassBorder)
-        ToolRow("🚫 屏蔽广告接口", "自定义广告/追踪接口黑名单 · 逐条开关 · 导入导出", Icons.Outlined.Block, subTextColor) {
-            // 新功能: 抓包发现的广告/追踪接口, 自己加进黑名单三层断网; 支持增删改 + 逐条开关 + 导入导出
-            try { showHostComposeScreen(activity) { onClose -> AdApiBlockScreen(activity, onClose) } }
-            catch (e: Throwable) { Toast.makeText(activity, "广告接口黑名单唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
-        }
-        SettingsDivider(glassBorder)
-        ToolRow("🔑 凭证与运行状态", "Authorization / UA / 坐标 / API Key 查看", Icons.Outlined.VpnKey, subTextColor) {
-            // 新功能: 集中展示 + 编辑所有关键运行时凭证
-            try { showHostComposeScreen(activity) { onClose -> CredentialViewerScreen(activity, onClose) } }
-            catch (e: Throwable) { Toast.makeText(activity, "凭证页唤起失败: ${e.message}", Toast.LENGTH_SHORT).show() }
-        }
-        SettingsDivider(glassBorder)
-        ToolRow("🗑 清理角色缓存并重启", "粉碎 mmkv 角色缓存后重启宿主", Icons.Outlined.DeleteSweep, subTextColor) {
-            val ok = MmkvCacheClearHook.clearMmkvCache(activity)
-            Toast.makeText(activity, if (ok) "缓存已粉碎, 正在重启..." else "无旧缓存, 直接重启...", Toast.LENGTH_SHORT).show()
-            FloatingUI.restartHostApp(activity)
-        }
     }
 }
 
@@ -897,32 +906,41 @@ private fun ToolsSection(
 private fun ToolRow(
     title: String, subtitle: String?, icon: ImageVector?, subTextColor: Color, onClick: () -> Unit
 ) {
+    // 文件夹内紧凑渲染 (与 SettingsSwitchItem 紧凑密度一致)
+    val compact = LocalFolderCompact.current
+    val titleSp = if (compact) 14.5.sp else 17.sp
+    val subSp = if (compact) 11.5.sp else 13.sp
+    val vPad = if (compact) 10.dp else 14.dp
+    val hPad = if (compact) 12.dp else 16.dp
+    val iconBox = if (compact) 34.dp else 40.dp
+    val iconSz = if (compact) 20.dp else 24.dp
+    val iconSp = if (compact) 12.dp else 16.dp
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .padding(horizontal = hPad, vertical = vPad),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (icon != null) {
             Box(
                 modifier = Modifier
-                    .size(40.dp)
+                    .size(iconBox)
                     .background(Color(0x1A000000), shape = RoundedCornerShape(12.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(icon, contentDescription = null, tint = subTextColor, modifier = Modifier.size(24.dp))
+                Icon(icon, contentDescription = null, tint = subTextColor, modifier = Modifier.size(iconSz))
             }
-            Spacer(modifier = Modifier.width(16.dp))
+            Spacer(modifier = Modifier.width(iconSp))
         }
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, fontSize = 17.sp, fontWeight = FontWeight.Medium, color = subTextColor)
+            Text(title, fontSize = titleSp, fontWeight = FontWeight.Medium, color = subTextColor)
             if (subtitle != null) {
                 Spacer(modifier = Modifier.height(2.dp))
-                Text(subtitle, fontSize = 13.sp, color = subTextColor.copy(alpha = 0.8f))
+                Text(subtitle, fontSize = subSp, color = subTextColor.copy(alpha = 0.8f), lineHeight = if (compact) 14.sp else TextUnit.Unspecified)
             }
         }
-        Spacer(modifier = Modifier.width(16.dp))
+        Spacer(modifier = Modifier.width(iconSp))
         Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = subTextColor)
     }
 }
@@ -930,37 +948,6 @@ private fun ToolRow(
 // ---------------------------------------------------------------------------
 //  备份目录配置
 // ---------------------------------------------------------------------------
-
-@Composable
-private fun BackupDirSection(glassColor: Color, glassBorder: Color, textColor: Color, subTextColor: Color) {
-    val ctx = LocalContext.current
-    var dir by rememberConfigString("backup_dir", "")
-
-    SettingsSection("聊天数据备份目录", glassColor, glassBorder, subTextColor) {
-        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-            Text(
-                "留空 = 默认 Download/bluedbackups。保存后重启 Blued 生效。实际 备份/恢复 操作请在 Blued 内点击「工具 → 聊天备份与恢复」。",
-                fontSize = 13.sp, color = subTextColor
-            )
-            Spacer(modifier = Modifier.height(10.dp))
-            OutlinedTextField(
-                value = dir,
-                onValueChange = { dir = it },
-                label = { Text("备份目录 (绝对路径)") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(modifier = Modifier.height(10.dp))
-            Button(
-                onClick = {
-                    Config.setBackupDir(dir.trim(), ctx)
-                    Toast.makeText(ctx, "已保存, 重启 Blued 后生效", Toast.LENGTH_LONG).show()
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("保存备份目录") }
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 //  通用 Composable (沿用 llhook 原视觉)
@@ -998,6 +985,11 @@ fun SettingsSection(
 //  用于项数较多的分组 (个性化 / 聊天增强), 避免主列表过长。
 //  弹窗内容可滚动 (heightIn max 460dp), 内部项与普通 SettingsSwitchItem 完全一致。
 // ---------------------------------------------------------------------------
+
+/** 文件夹内紧凑渲染开关: SettingsFolder 内部 provide=true,
+ *  SettingsSwitchItem 读取后自动缩小字号/间距/图标, 减少标题副标题换行与占用空间。 */
+val LocalFolderCompact = staticCompositionLocalOf { false }
+
 @Composable
 fun SettingsFolder(
     title: String,
@@ -1070,13 +1062,15 @@ fun SettingsFolder(
             title = title,
             subtitle = subtitle
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 460.dp)
-                    .verticalScroll(rememberScrollState())
-            ) {
-                content()
+            CompositionLocalProvider(LocalFolderCompact provides true) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 460.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    content()
+                }
             }
         }
     }
@@ -1106,6 +1100,15 @@ fun SettingsSwitchItem(
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val haptic = LocalHapticFeedback.current
+    // 文件夹内紧凑渲染 (缩小字号/间距/图标, 减少换行与占用空间)
+    val compact = LocalFolderCompact.current
+    val titleSp = if (compact) 14.5.sp else 17.sp
+    val subSp = if (compact) 11.5.sp else 13.sp
+    val vPad = if (compact) 10.dp else 14.dp
+    val hPad = if (compact) 12.dp else 16.dp
+    val iconBox = if (compact) 34.dp else 40.dp
+    val iconSz = if (compact) 20.dp else 24.dp
+    val iconSp = if (compact) 12.dp else 16.dp
 
     val scale by animateFloatAsState(
         targetValue = if (isPressed) 0.98f else 1f,
@@ -1130,30 +1133,30 @@ fun SettingsSwitchItem(
                     }
                 }
             )
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .padding(horizontal = hPad, vertical = vPad),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (icon != null) {
             Box(
                 modifier = Modifier
-                    .size(40.dp)
+                    .size(iconBox)
                     .background(Color(0x1A000000), shape = RoundedCornerShape(12.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(imageVector = icon, contentDescription = null, tint = textColor, modifier = Modifier.size(24.dp))
+                Icon(imageVector = icon, contentDescription = null, tint = textColor, modifier = Modifier.size(iconSz))
             }
-            Spacer(modifier = Modifier.width(16.dp))
+            Spacer(modifier = Modifier.width(iconSp))
         }
 
         Column(modifier = Modifier.weight(1f)) {
-            Text(text = title, fontSize = 17.sp, fontWeight = FontWeight.Medium, color = textColor)
+            Text(text = title, fontSize = titleSp, fontWeight = FontWeight.Medium, color = textColor)
             if (subtitle != null) {
                 Spacer(modifier = Modifier.height(2.dp))
-                Text(text = subtitle, fontSize = 13.sp, color = subTextColor)
+                Text(text = subtitle, fontSize = subSp, color = subTextColor, lineHeight = if (compact) 14.sp else TextUnit.Unspecified)
             }
         }
 
-        Spacer(modifier = Modifier.width(16.dp))
+        Spacer(modifier = Modifier.width(iconSp))
 
         if (trailingSlot != null) {
             trailingSlot()
@@ -1206,7 +1209,8 @@ fun CenteredPanelDialog(
     val titleColor = if (isDark) Color.White else Color(0xFF1E293B)
     val subColor = if (isDark) Color.White.copy(alpha = 0.6f) else Color(0xFF64748B)
 
-    Dialog(onDismissRequest = onDismissRequest) {
+    // usePlatformDefaultWidth=false → 突破平台默认窄宽度, fillMaxWidth() 拉满 (与净化面板一致)
+    Dialog(onDismissRequest = onDismissRequest, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
             shape = RoundedCornerShape(24.dp),
             color = glass,

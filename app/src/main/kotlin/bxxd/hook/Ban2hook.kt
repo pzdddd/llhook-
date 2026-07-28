@@ -132,13 +132,13 @@ object Ban2Hook : BaseHook {
     }
 
     // =========================================================================
-    //  阶段 2: 风控用户列表公开 API (供 com.example.ui.RiskUsersScreen 调用)
+    //  阶段 2: 拦截用户列表公开 API (供 com.example.ui.RiskUsersScreen 调用)
     //  数据持久化: SharedPreferences("llhook_risk_users") 两个 JSON 键
-    //    - intercepted_uids_json: 自动拦截的风控用户
+    //    - intercepted_uids_json: 自动拦截用户
     //    - collected_uids_json:   手动收藏/添加的用户
     // =========================================================================
 
-    /** 风控用户记录 (阶段 2 公开数据模型) */
+    /** 拦截用户记录 (阶段 2 公开数据模型) */
     data class RiskUser(
         val uid: String,
         val name: String,       // 备注名 (默认 = uid)
@@ -237,7 +237,7 @@ object Ban2Hook : BaseHook {
     /** 导出全部记录为可读文本 */
     fun exportAll(ctx: Context): String {
         val sb = StringBuilder()
-        sb.appendLine("════════ llhook 风控用户列表 ════════")
+        sb.appendLine("════════ llhook 拦截用户列表 ════════")
         sb.appendLine("导出时间: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())}")
         val inter = getInterceptedUsers(ctx)
         sb.appendLine("\n── 自动拦截记录 (${inter.size}) ──")

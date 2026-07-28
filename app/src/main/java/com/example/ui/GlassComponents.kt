@@ -88,6 +88,24 @@ data class LlhookColors(
     val warning: Color
 )
 
+/**
+ * 固定深色配色 (不跟随系统主题)。
+ *
+ * 适用场景: 背景画刷被硬编码为深色的页面 (如 NetworkCaptureScreen /
+ * EndataDecryptScreen)。这类页面若仍用 [llhookColorScheme] (跟随系统),
+ * 在系统浅色模式下会出现“浅色卡片/文字落在深色背景上”的对比度 bug。
+ * 用本函数强制深色, 保证卡片/文字与深色背景一致。
+ */
+fun llhookDarkColors(): LlhookColors = LlhookColors(
+    text = Color.White,
+    subText = Color(0xFFA0AEC0),
+    glass = Color(0xCC1E293B),
+    glassStroke = Color(0x33FFFFFF),
+    accent = Color(0xFF4CAF50),
+    danger = Color(0xFFEF4444),
+    warning = Color(0xFFFF9800)
+)
+
 // ---------------------------------------------------------------------------
 //  背景: 统一的深色基底 + 各页可选的 accent 主题色微染。
 //  深色模式基色统一为 slate-900→slate-800 (保证对比度), 浅色模式由调用方决定。

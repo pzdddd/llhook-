@@ -17,9 +17,14 @@ import java.net.URL
  *  本类负责【屏蔽广告类】: 在网络底层拦截广告 / 追踪 / 语音交友 / 呼叫 API 请求,
  *  让它们连不上或打到回环地址。所有网络级拦截集中在此, 杜绝分散重复 hook。
  *
- *  总开关: switch_block_ads (UI「去广告」开关)。
- *  注意: voice.blued.cn (语音交友) 与 /users/call (呼叫 API) 无论开关与否一律阻断
- *  (这两类本就是骚扰来源, 不受用户配置影响)。
+ *  入口开关 (各层独立控制, 默认全关, 零副作用):
+ *   - switch_block_ads       : 广告/追踪域名 + 静态广告路径 (UI「去广告」)
+ *   - purify_block_voice     : voice.blued.cn 语音交友断网 (KEY_BLOCK_VOICE)
+ *   - purify_block_call      : /users/call 呼叫 API 拦截 (KEY_BLOCK_CALL)
+ *   - switch_block_ad_api    : 用户自定义黑名单 (ad_blocklist_user)
+ *  ★ 旧版 voice/call 硬编码「无论开关一律阻断」, 在 Blued 7.39 上误伤核心接口导致
+ *    「网络错误」; 现已改为独立开关 (默认关, 不随净化总开关), 可在「净化中心」逐项控制。
+ *    拦截命中时会打 [llhook-AdBlock] 去重日志, 便于定位哪个 host 被误拦。
  *
  *  联动「闪照免看广告」(switch_flash_ad_skip): 开启时自动放行激励视频广告 SDK
  *  域名 (穿山甲/优量汇/快手), 让「看视频获得一次机会」面板可正常拉取广告配置,
@@ -44,6 +49,13 @@ object AdBlockHook : BaseHook {
     //   兼容旧版: 读到不以 '[' 开头的值视为旧换行格式, 自动迁移为 JSON(全部 enabled)
     const val KEY_USER_BLOCK_SWITCH = "switch_block_ad_api"
     const val KEY_USER_BLOCKLIST = "ad_blocklist_user"
+    private const val TAG = "llhook-AdBlock"
+    /** 语音交友 / 呼叫API 网络拦截的独立开关 (默认关; 不随净化总开关, 因断网可能误伤新版核心接口)。
+     *  UI 在「净化中心」逐项控制 (purify_block_voice / purify_block_call)。 */
+    const val KEY_BLOCK_VOICE = "purify_block_voice"
+    const val KEY_BLOCK_CALL = "purify_block_call"
+    /** 诊断: 已打印过拦截日志的 host/url (去重, 避免高频请求刷屏)。 */
+    private val loggedHits = java.util.Collections.synchronizedSet(LinkedHashSet<String>())
 
     /** 一条用户自定义广告接口规则 (pattern + 是否启用)。 */
     data class AdRule(val pattern: String, val enabled: Boolean)
@@ -146,21 +158,27 @@ object AdBlockHook : BaseHook {
             if (builderClass != null) {
                 XposedBridge.hookAllMethods(builderClass, "build", object : XC_MethodHook() {
                     override fun beforeHookedMethod(param: MethodHookParam) {
-                        if (!Config.isFeatureEnabled("switch_block_ads")) return
+                        // ★ 各入口独立开关 (默认全关, 零副作用); 全关时直返, 不读 url 不匹配
+                        val blockAds = Config.isFeatureEnabled("switch_block_ads")
+                        val blockVoice = Config.isFeatureEnabled(KEY_BLOCK_VOICE)
+                        val blockCall = Config.isFeatureEnabled(KEY_BLOCK_CALL)
+                        if (!blockAds && !blockVoice && !blockCall) return
 
                         val builder = param.thisObject
                         val urlObj = try { XposedHelpers.getObjectField(builder, "url") } catch (e: Throwable) { null }
                         val urlStr = urlObj?.toString()?.lowercase() ?: return
 
-                        val isCallApi = urlStr.contains("/users/call")
-                        val isExactAdPath = urlStr.contains("/obj/static/ad/")
-                        val isVoice = urlStr.contains("voice.blued.cn")
+                        val isVoice = blockVoice && urlStr.contains("voice.blued.cn")
+                        val isCallApi = blockCall && urlStr.contains("users/call")
+                        val isExactAdPath = blockAds && urlStr.contains("/obj/static/ad/")
                         // 命中广告域名, 但「闪照免看广告」开启时放行激励视频 SDK 域名
-                        val isAd = shouldBlockAd(urlStr)
+                        val isAd = blockAds && shouldBlockAd(urlStr)
                         // 用户自定义广告接口黑名单 (switch_block_ad_api 控制总开关)
                         val isUserBlocked = matchesUserBlocklist(urlStr)
 
-                        if (isCallApi || isExactAdPath || isVoice || isAd || isUserBlocked) {
+                        if (isVoice || isCallApi || isExactAdPath || isAd || isUserBlocked) {
+                            if (loggedHits.add("ok:$urlStr"))
+                                XposedBridge.log("$TAG [OkHttp拦截] $urlStr (voice=$isVoice call=$isCallApi ad=$isAd exactAd=$isExactAdPath user=$isUserBlocked)")
                             try {
                                 val httpUrlClass = XposedHelpers.findClass("okhttp3.HttpUrl", lpparam.classLoader)
                                 val dummyUrl = XposedHelpers.callStaticMethod(httpUrlClass, "parse", "http://127.0.0.1/blocked_by_llhook")
@@ -182,11 +200,16 @@ object AdBlockHook : BaseHook {
                 name == "getAllByName" && parameterTypes.size == 1 && parameterTypes[0] == String::class.java
             }.hookBefore { param ->
                 val host = param.args[0] as? String ?: return@hookBefore
-                // 语音交友域名始终断网; 广告/追踪域名受开关控制 (闪照免看广告时放行激励视频域名)
+                // 广告域名受 switch_block_ads 控制; 语音交友域名受独立开关 KEY_BLOCK_VOICE 控制 (默认关)
                 val blockAds = Config.isFeatureEnabled("switch_block_ads")
+                val blockVoice = Config.isFeatureEnabled(KEY_BLOCK_VOICE)
                 // 用户自定义黑名单: 这里只有 host, 路径型规则会在 OkHttp/URL 层命中, host 型在此命中
                 val userHit = matchesUserBlocklist(host)
-                if ((blockAds && shouldBlockAd(host)) || host.contains("voice.blued.cn") || userHit) {
+                val hitAds = blockAds && shouldBlockAd(host)
+                val hitVoice = blockVoice && host.contains("voice.blued.cn")
+                if (hitAds || hitVoice || userHit) {
+                    if (loggedHits.add("dns:$host"))
+                        XposedBridge.log("$TAG [DNS拦截] $host (voice=$hitVoice ads=$hitAds user=$userHit)")
                     // 强制返回本地回环 IP (127.0.0.1)，让它去访问空气
                     val fakeAddress = InetAddress.getByAddress(host, byteArrayOf(127, 0, 0, 1))
                     param.result = arrayOf(fakeAddress)
@@ -206,11 +229,17 @@ object AdBlockHook : BaseHook {
             val urlStr = urlObj.toString().lowercase()
 
             val blockAds = Config.isFeatureEnabled("switch_block_ads")
-            val isExactAdPath = urlStr.contains("/obj/static/ad/")
-            val isCallApi = urlStr.contains("/users/call")
+            val blockVoice = Config.isFeatureEnabled(KEY_BLOCK_VOICE)
+            val blockCall = Config.isFeatureEnabled(KEY_BLOCK_CALL)
+            val isExactAdPath = blockAds && urlStr.contains("/obj/static/ad/")
+            val isCallApi = blockCall && urlStr.contains("users/call")
+            val isVoice = blockVoice && host.contains("voice.blued.cn")
+            val hitAds = blockAds && shouldBlockAd(host)
             val isUserBlocked = matchesUserBlocklist(urlStr)
             // 精准狙击静态广告图片 + 呼叫 API + 广告域名 + 用户自定义黑名单, 防误伤 CDN
-            if ((blockAds && (shouldBlockAd(host) || isExactAdPath || isCallApi)) || host.contains("voice.blued.cn") || isUserBlocked) {
+            if (hitAds || isExactAdPath || isCallApi || isVoice || isUserBlocked) {
+                if (loggedHits.add("url:$urlStr"))
+                    XposedBridge.log("$TAG [URL拦截] $urlStr (voice=$isVoice call=$isCallApi ad=$hitAds exactAd=$isExactAdPath user=$isUserBlocked)")
                 throw java.net.ConnectException("Connection blocked by llhook")
             }
         }

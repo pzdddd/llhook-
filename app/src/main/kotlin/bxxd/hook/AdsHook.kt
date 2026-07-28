@@ -41,8 +41,11 @@ object AdsHook : BaseHook {
 
     // 🎯 终极 UI 暗杀名单 (信息流列表压扁机用)
     private val targetViewIds = arrayOf(
+        "card_style_2",
         "card_style_3",
         "cl_style_1",
+        "cl_style_2",
+        "ad_content_layout",   // item_feed_ad.xml 信息流广告卡片根容器
         "ll_img_list",
         "recommend_view",
         "layout_native_ad",
@@ -74,6 +77,9 @@ object AdsHook : BaseHook {
         "身边列表·显示个性签名"   to "nearby_show_sign",
         // —— 聊天界面 ——
         "聊天·安全提示卡片"         to "purify_chat_safe",
+        // —— 网络层拦截 (独立开关, 不随净化总开关; 默认关, 误伤新版接口可随时关闭) ——
+        "网络·语音交友断网"        to "purify_block_voice",
+        "网络·呼叫API拦截"         to "purify_block_call",
         // —— 底部 Tab 栏 —— (find_*=身边 / feed_*=发现 / live_*=直播, 按显示文字匹配, 标准版/极速版均正确)
         "底部Tab·隐藏发现"        to "purify_tab_feed",
         // —— 发现页内容 ——
@@ -197,7 +203,17 @@ object AdsHook : BaseHook {
                             val viewIdName = try { itemView.context.resources.getResourceEntryName(itemView.id) } catch(e:Throwable){""}
                             val isRootTarget = targetViewIds.contains(viewIdName)
 
-                            if (isAdObject(item) || isRootTarget) {
+                            // 运营推广卡识别: tv_operate_title 只出现在 item_people_*_operate_promotion 布局,
+                            // 是运营推广卡(fl_main/ll_main/header_view/ll_info/tv_operate_title 这套)的标志 id。
+                            //   ⚠️ fl_main/ll_main/header_view 是通用容器(分别用在 31/63/103 个布局, 含附近正常用户列表项),
+                            //      不能直接全局删除 → 会误伤附近列表。改用 tv_operate_title 精准识别该卡, 压掊整行。
+                            val isOperatePromotion = try {
+                                val ctx = itemView.context
+                                val rid = ctx.resources.getIdentifier("tv_operate_title", "id", ctx.packageName)
+                                rid != 0 && itemView.findViewById<View>(rid) != null
+                            } catch(e:Throwable){false}
+
+                            if (isAdObject(item) || isRootTarget || isOperatePromotion) {
                                 crushViewSafely(itemView)
                                 val parent = itemView.parent as? ViewGroup
                                 if (parent != null && parent.javaClass.simpleName == "LinearLayout") {
@@ -460,7 +476,8 @@ object AdsHook : BaseHook {
                 if (purifyEnabled("purify_tab_live")) hideBottomTabByLabel(decor, "liveVideo_live")    // 直播
 
                 // —— 发现页内容净化 ——
-                hideViewByIdNames(decor, arrayOf("blued_ad_layout"), "purify_find_ad")
+                // fragment_advert.xml 广告 fragment: ll_ad_layout(广告容器) + cl_ad_logo_layout(广告角标)
+                hideViewByIdNames(decor, arrayOf("blued_ad_layout", "ll_ad_layout", "cl_ad_logo_layout"), "purify_find_ad")
                 // ad_view_layout 是广告 SDK 运行时动态 inflate 后 addView 的占位容器
                 //   (不在任何静态布局里, jadx 也搜不到) → decorView 递归扫描能命中运行时挂载的 view
                 hideViewByIdNames(decor, arrayOf("ad_view_layout"), "purify_ad_view")

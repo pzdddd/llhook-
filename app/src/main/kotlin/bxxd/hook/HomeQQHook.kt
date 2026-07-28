@@ -728,7 +728,7 @@ object HomeQQHook : BaseHook {
                     if (a != null) {
                         com.example.ui.showHostComposeScreen(a) { onClose ->
                             com.example.ui.theme.MyApplicationTheme {
-                                // mineEntry=true: “我的”入口显示完整配置分区 (基础/聊天增强/隐私特权/风控)
+                                // mineEntry=true: “我的”入口显示完整配置分区 (基础/聊天增强/隐私特权/拦截)
                                 com.example.ui.MainScreen(hostActivity = a, inHost = true, mineEntry = true)
                             }
                         }

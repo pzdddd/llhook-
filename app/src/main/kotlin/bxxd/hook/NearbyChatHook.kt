@@ -102,6 +102,12 @@ object NearbyChatHook : BaseHook {
 
         val distView = itemView.findViewById<View>(distId) ?: return
 
+        // ⚠️ 排除资料页「动态」feed 项: item_feed_user_info.xml 同样含 ll_distance_and_time,
+        //    但它是资料页动态列表的用户信息行(含 feed_user_info), 不是附近列表项 → 跳过,
+        //    否则聊天/相册按钮会误注入到资料页动态里。附近列表项(item_people_list)无 feed_user_info。
+        val feedInfoId = res.getIdentifier("feed_user_info", "id", pkg)
+        if (feedInfoId != 0 && itemView.findViewById<View>(feedInfoId) != null) return
+
         val wantChat = Config.isFeatureEnabled("switch_nearby_chat", ctx)
         val wantAlbum = Config.isFeatureEnabled("switch_nearby_album", ctx)
         if (!wantChat && !wantAlbum) return

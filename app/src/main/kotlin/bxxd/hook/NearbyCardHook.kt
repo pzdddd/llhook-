@@ -56,9 +56,8 @@ object NearbyCardHook : BaseHook {
 
         // 锚点: ll_distance_and_time 确认是 people list 项 (过滤非目标 item / 宫格卡片)
         val anchorId = res.getIdentifier("ll_distance_and_time", "id", pkg)
-        if (anchorId == 0) { XposedBridge.log("$TAG 锚点id=0(版本不符)"); return }
-        val anchor = itemView.findViewById<View>(anchorId)
-            ?: run { XposedBridge.log("$TAG 锚点未命中(非列表项或宫格)"); return }
+        if (anchorId == 0) return
+        val anchor = itemView.findViewById<View>(anchorId) ?: return
 
         // 从锚点向上回溯 fl_main (item 内容根); 找不到就用 itemView
         val flMainId = res.getIdentifier("fl_main", "id", pkg)
@@ -73,7 +72,7 @@ object NearbyCardHook : BaseHook {
             }
             if (!found && itemView.id == flMainId) { target = itemView; found = true }
         }
-        if (!found) { XposedBridge.log("$TAG fl_main未定位到"); return }
+        if (!found) return
 
         val radius = dpF(ctx, Config.readRawLocal("nearby_card_radius", ctx).let { if (it=="null"||it.isEmpty())"16" else it }.toFloatOrNull() ?: 16f)
         val alphaPct = (Config.readRawLocal("nearby_card_alpha", ctx).let { if (it=="null"||it.isEmpty())"100" else it }.toFloatOrNull() ?: 100f).coerceIn(0f, 100f)

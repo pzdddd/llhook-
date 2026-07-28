@@ -41,7 +41,7 @@ import java.util.Date
 import java.util.Locale
 
 // ============================================================================
-//  风控用户列表 (Compose 玻璃拟态全屏页)
+//  拦截用户列表 (Compose 玻璃拟态全屏页)
 //
 //  架构 (b): 宿主内就地弹出 (showHostComposeScreen)。
 //  逻辑全用 bxxd.hook.Ban2Hook:
@@ -93,7 +93,7 @@ fun RiskUsersScreen(activity: Activity, onClose: () -> Unit) {
         Column(modifier = Modifier.fillMaxSize().imePadding()) {
             // ============ 顶栏 (统一组件) ============
             LlhookTopBar(
-                title = "风控用户列表",
+                title = "拦截/收藏用户列表",
                 subtitle = "拦截 ${intercepted.size} · 收藏 ${collected.size}",
                 onBack = onClose,
                 glass = colors.glass,
@@ -109,7 +109,7 @@ fun RiskUsersScreen(activity: Activity, onClose: () -> Unit) {
                 Spacer(Modifier.width(8.dp))
                 // 导出
                 GlassIconButton(onClick = {
-                    copy(ctx, "风控用户列表", Ban2Hook.exportAll(ctx))
+                    copy(ctx, "拦截用户列表", Ban2Hook.exportAll(ctx))
                     Toast.makeText(ctx, "已导出到剪贴板", Toast.LENGTH_SHORT).show()
                 }, glass = colors.glass, stroke = colors.glassStroke, size = 42,
                     contentDescription = "导出列表") {
