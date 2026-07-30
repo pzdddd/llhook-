@@ -408,7 +408,7 @@ object BluedDecryptHook {
             captureEnabled = Config.getRaw("net_capture_enabled", "false") == "true"
         }
 
-        XposedBridge.log("🔵 [蓝蓝Hook] 成功注入进程: ${lpparam.packageName} (captureEnabled=$captureEnabled)")
+        XposedBridge.log(" [蓝蓝Hook] 成功注入进程: ${lpparam.packageName} (captureEnabled=$captureEnabled)")
 
         // 缓存 b.java / c.java 类引用 (强制解密复用, 避免反复 findClass)
         bClassRef = runCatching {
@@ -417,7 +417,7 @@ object BluedDecryptHook {
         cClassRef = runCatching {
             XposedHelpers.findClass("com.blued.android.http.encode.utils.c", lpparam.classLoader)
         }.getOrNull()
-        XposedBridge.log("🔵 [蓝蓝Hook] 类引用缓存: b=${bClassRef != null} c=${cClassRef != null}")
+        XposedBridge.log(" [蓝蓝Hook] 类引用缓存: b=${bClassRef != null} c=${cClassRef != null}")
 
         // ==========================================
         // 监控点 3：OkHttp Request.Builder.build() —— 关联原请求信息
@@ -469,9 +469,9 @@ object BluedDecryptHook {
                     }
                 }
             })
-            XposedBridge.log("🔵 [蓝蓝Hook] (监控点3) OkHttp build() 关联器挂载成功！")
+            XposedBridge.log("[蓝蓝Hook] (监控点3) OkHttp build() 关联器挂载成功！")
         } catch (e: Throwable) {
-            XposedBridge.log("🔵 [蓝蓝Hook] (监控点3) build() 关联器挂载失败: ${e.message}")
+            XposedBridge.log("[蓝蓝Hook] (监控点3) build() 关联器挂载失败: ${e.message}")
         }
 
         // ==========================================
@@ -494,19 +494,19 @@ object BluedDecryptHook {
                             val requestUrl = param.args[2] as? String
 
                             append(requestUrl, plainText, "解密明文")
-                            XposedBridge.log("========== 🔵 蓝蓝响应解密成功 ==========")
-                            XposedBridge.log("👉 URL: $requestUrl")
-                            XposedBridge.log("✅ 明文: $plainText")
+                            XposedBridge.log("==========  蓝蓝响应解密成功 ==========")
+                            XposedBridge.log("URL: $requestUrl")
+                            XposedBridge.log("明文: $plainText")
                             XposedBridge.log("=========================================")
                         } catch (e: Exception) {
-                            XposedBridge.log("🔵 解析异常: ${e.message}")
+                            XposedBridge.log(" 解析异常: ${e.message}")
                         }
                     }
                 }
             )
-            XposedBridge.log("🔵 [蓝蓝Hook] (监控点1) 解密函数挂载成功！")
+            XposedBridge.log("[蓝蓝Hook] (监控点1) 解密函数挂载成功！")
         } catch (e: Throwable) {
-            XposedBridge.log("🔵 [蓝蓝Hook] (监控点1) 挂载失败: ${e.message}")
+            XposedBridge.log(" [蓝蓝Hook] (监控点1) 挂载失败: ${e.message}")
         }
 
         // ==========================================
@@ -525,7 +525,7 @@ object BluedDecryptHook {
                         val rawJson = param.args[2] as String
 
                         append(url, rawJson, "原始响应")
-                        XposedBridge.log("====== 📥 收到原始网络响应 ======")
+                        XposedBridge.log("======  收到原始网络响应 ======")
                         XposedBridge.log("URL: $url")
                         XposedBridge.log("Raw Data (服务器原封不动返回的数据): $rawJson")
 
@@ -535,19 +535,19 @@ object BluedDecryptHook {
                             val result = tryDecryptRawResponse(url, rawJson)
                             if (result != null) {
                                 append(url, result.second, "强制解密")
-                                XposedBridge.log("🔓 [强制解密] en_data 已解密 (${result.first.length} 字符)")
-                                XposedBridge.log("✅ 明文: ${result.second}")
+                                XposedBridge.log("[强制解密] en_data 已解密 (${result.first.length} 字符)")
+                                XposedBridge.log(" 明文: ${result.second}")
                             } else {
-                                XposedBridge.log("⚠️ [强制解密] en_data 解密失败 (密钥未就绪 或 URL/AAD 不匹配)")
+                                XposedBridge.log(" [强制解密] en_data 解密失败 (密钥未就绪 或 URL/AAD 不匹配)")
                             }
                         }
                         XposedBridge.log("==================================")
                     }
                 }
             })
-            XposedBridge.log("🔵 [蓝蓝Hook] (监控点2) 原始响应分发器挂载成功！")
+            XposedBridge.log(" [蓝蓝Hook] (监控点2) 原始响应分发器挂载成功！")
         } catch (e: Throwable) {
-            XposedBridge.log("🔵 [蓝蓝Hook] (监控点2) 分发器挂载失败: ${e.message}")
+            XposedBridge.log(" [蓝蓝Hook] (监控点2) 分发器挂载失败: ${e.message}")
         }
     }
 }

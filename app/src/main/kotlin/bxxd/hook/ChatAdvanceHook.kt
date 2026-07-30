@@ -86,7 +86,7 @@ object ChatAdvanceHook : BaseHook {
         }
     }
 
-    // 1. 消息已读防隐身 (保留旧 hook: generateFullMethodName, 仅 switch_read_receipt)
+    // 1. 开启悄悄查看(保留旧 hook: generateFullMethodName, 仅 switch_read_receipt)
     private fun hookReadReceipt(lpparam: XC_LoadPackage.LoadPackageParam) {
         try {
             val descriptorClass = lpparam.classLoader.loadClass(Config.TargetClasses.GRPC_METHOD_DESCRIPTOR)

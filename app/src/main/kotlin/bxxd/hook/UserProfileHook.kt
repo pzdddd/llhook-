@@ -16,7 +16,7 @@ object UserProfileHook {
         // 缩短关键字，防止 URL 带有随机参数导致匹配失败
         val targetUrlKeyword = "users/95207747" 
 
-        XposedBridge.log("🔵 [蓝蓝Hook] 启动终极抓取与强制解密引擎...")
+        XposedBridge.log(" [蓝蓝Hook] 启动终极抓取与强制解密引擎...")
 
         // ==========================================
         // 1. UA 伪装 (绕过风控)
@@ -34,7 +34,7 @@ object UserProfileHook {
                 }
             )
         } catch (e: Throwable) {
-            XposedBridge.log("🔵 UA伪装异常: ${e.message}")
+            XposedBridge.log(" UA伪装异常: ${e.message}")
         }
 
         // ==========================================
@@ -51,8 +51,8 @@ object UserProfileHook {
                         val rawJson = param.args[2] as String
 
                         if (url.contains(targetUrlKeyword)) {
-                            XposedBridge.log("====== 🎯 捕获目标接口 ======")
-                            XposedBridge.log("👉 URL: $url")
+                            XposedBridge.log("====== 捕获目标接口 ======")
+                            XposedBridge.log("URL: $url")
 
                             try {
                                 val jsonObject = JSONObject(rawJson)
@@ -66,18 +66,18 @@ object UserProfileHook {
                                     if (secretKey != null) {
                                         // 密钥存在！主动呼叫 c.java 的核心解密算法
                                         val plainText = XposedHelpers.callStaticMethod(cClass, "I111I1lI1I1", enData, secretKey, url) as? String
-                                        XposedBridge.log("✅ 【强制解密成功】: $plainText")
+                                        XposedBridge.log(" 【强制解密成功】: $plainText")
                                     } else {
                                         // 没密钥解不了，提示冷启动
-                                        XposedBridge.log("❌ 【解密失败】: 内存中未找到密钥(l1l1l1l1为空)！")
-                                        XposedBridge.log("⚠️ 请去手机设置 -> 应用管理 -> 强行停止蓝蓝，然后重新打开让它重新握手！")
+                                        XposedBridge.log("【解密失败】: 内存中未找到密钥(l1l1l1l1为空)！")
+                                        XposedBridge.log("请去手机设置 -> 应用管理 -> 强行停止蓝蓝，然后重新打开让它重新握手！")
                                     }
                                 } else {
                                     // 如果服务器大发慈悲没加密，直接打印
-                                    XposedBridge.log("ℹ️ 响应未加密(明文): $rawJson")
+                                    XposedBridge.log(" 响应未加密(明文): $rawJson")
                                 }
                             } catch (e: Exception) {
-                                XposedBridge.log("⚠️ JSON解析或解密出错: ${e.message}")
+                                XposedBridge.log("JSON解析或解密出错: ${e.message}")
                             }
                             XposedBridge.log("===============================")
                         } // 👈 补上 url.contains 的大括号

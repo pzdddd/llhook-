@@ -141,8 +141,8 @@ fun RiskUsersScreen(activity: Activity, onClose: () -> Unit) {
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                TabChip("🛡 拦截记录 (${intercepted.size})", selectedTab == 0, colors.glass, colors.glassStroke) { selectedTab = 0 }
-                TabChip("⭐ 我的收藏 (${collected.size})", selectedTab == 1, colors.glass, colors.glassStroke) { selectedTab = 1 }
+                TabChip(" 拦截记录 (${intercepted.size})", selectedTab == 0, colors.glass, colors.glassStroke) { selectedTab = 0 }
+                TabChip(" 我的收藏 (${collected.size})", selectedTab == 1, colors.glass, colors.glassStroke) { selectedTab = 1 }
             }
 
             // ============ 列表 ============

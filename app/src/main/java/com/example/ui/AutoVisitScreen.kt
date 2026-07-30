@@ -156,7 +156,7 @@ fun AutoVisitScreen(activity: Activity, onClose: () -> Unit) {
 
             // ============ 参数配置 ============
             // 距离范围
-            ConfigSection("🎯 距离筛选 (米)", colors) {
+            ConfigSection("距离筛选 (米)", colors) {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     NumField("最小", minDist, colors, Modifier.weight(1f)) { minDist = it.toIntOrNull() ?: 0 }
                     Text("～", color = colors.text, modifier = Modifier.align(Alignment.CenterVertically))
@@ -169,7 +169,7 @@ fun AutoVisitScreen(activity: Activity, onClose: () -> Unit) {
             Spacer(Modifier.height(10.dp))
 
             // 延迟范围
-            ConfigSection("⏱ 访问间隔 (毫秒)", colors) {
+            ConfigSection("访问间隔 (毫秒)", colors) {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     NumField("最小", delayMin, colors, Modifier.weight(1f)) { delayMin = it.toIntOrNull() ?: 800 }
                     Text("～", color = colors.text, modifier = Modifier.align(Alignment.CenterVertically))
@@ -182,7 +182,7 @@ fun AutoVisitScreen(activity: Activity, onClose: () -> Unit) {
             Spacer(Modifier.height(10.dp))
 
             // 数量上限
-            ConfigSection("🔢 数量上限 (0 = 不限)", colors) {
+            ConfigSection("数量上限 (0 = 不限)", colors) {
                 NumField("访问数量", maxCount, colors, Modifier.fillMaxWidth()) { maxCount = it.toIntOrNull() ?: 0 }
             }
 
@@ -238,10 +238,10 @@ fun AutoVisitScreen(activity: Activity, onClose: () -> Unit) {
                 ) {
                     Icon(Icons.Filled.RocketLaunch, null, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("🚀 开始批量访问", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text("开始批量访问", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 }
                 if (cachedCount == 0) {
-                    Text("⚠️ 请先在大厅下拉刷新加载附近用户",
+                    Text("请先在大厅下拉刷新加载附近用户",
                         color = colors.warning, fontSize = 11.sp, textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
                 }

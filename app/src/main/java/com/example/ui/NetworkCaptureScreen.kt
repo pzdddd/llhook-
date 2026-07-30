@@ -101,9 +101,9 @@ fun NetworkCaptureScreen(activity: Activity, onClose: () -> Unit) {
         if (on) {
             // 立即拉一次
             refreshPackets()
-            Toast.makeText(ctx, "🔴 抓包已开启, 实时记录中", Toast.LENGTH_SHORT).show()
+            Toast.makeText(ctx, "抓包已开启, 实时记录中", Toast.LENGTH_SHORT).show()
         } else {
-            Toast.makeText(ctx, "⏸ 抓包已暂停 (已记录的仍保留)", Toast.LENGTH_SHORT).show()
+            Toast.makeText(ctx, "抓包已暂停 (已记录的仍保留)", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -206,7 +206,7 @@ fun NetworkCaptureScreen(activity: Activity, onClose: () -> Unit) {
                         Spacer(Modifier.height(6.dp))
                         Text("打开右上角开关, 即可实时记录 Blued 的解密明文 API 响应\n"
                             + "(hook AES-GCM 解密 + 原始响应 + 请求头关联)\n"
-                            + "点任意包详情 → \"🔁 改UA重发\" 可换 UA 重放并自动解密 en_data",
+                            + "点任意包详情 → \"改UA重发\" 可换 UA 重放并自动解密 en_data",
                             color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp,
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center, lineHeight = 16.sp)
                     }
@@ -317,7 +317,7 @@ private fun PacketDetailDialog(
                     replayMode = !replayMode
                     if (!replayMode) { decryptResult = null; decryptError = null }
                 }) {
-                    Text(if (replayMode) "返回详情" else "🔁 改UA重发",
+                    Text(if (replayMode) "返回详情" else "改UA重发",
                         color = Color(0xFF60A5FA), fontSize = 12.sp)
                 }
                 if (hasEnData && !replayMode) {
@@ -332,7 +332,7 @@ private fun PacketDetailDialog(
                             decrypting = false
                         }
                     }) {
-                        Text(if (decrypting) "解密中…" else "🔓 解密en_data",
+                        Text(if (decrypting) "解密中…" else "解密en_data",
                             color = colors.warning, fontSize = 12.sp)
                     }
                 }
@@ -409,7 +409,7 @@ private fun PacketDetailDialog(
                     // 强制解密结果 (点“解密en_data”后展示)
                     decryptResult?.let { plain ->
                         Spacer(Modifier.height(8.dp))
-                        Text("🔓 强制解密明文", color = colors.warning, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text(" 强制解密明文", color = colors.warning, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                         Surface(
                             shape = RoundedCornerShape(6.dp),
                             color = Color(0xFF22C55E).copy(alpha = 0.1f),
@@ -425,7 +425,7 @@ private fun PacketDetailDialog(
                     }
                     decryptError?.let { err ->
                         Spacer(Modifier.height(8.dp))
-                        Text("⚠️ $err", color = colors.danger, fontSize = 10.sp, lineHeight = 14.sp)
+                        Text(" $err", color = colors.danger, fontSize = 10.sp, lineHeight = 14.sp)
                     }
                 }
             }
@@ -573,7 +573,7 @@ private fun ReplayPanel(
                 } else {
                     Icon(Icons.Filled.Replay, null, tint = Color.White, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("🔁 用此 UA 重发", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Text("用此 UA 重发", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -596,14 +596,14 @@ private fun ReplayPanel(
                 r.rawBody?.let { Text("${it.length} 字符", color = colors.subText, fontSize = 10.sp) }
             }
             r.error?.let {
-                Text("⚠️ $it", color = colors.danger, fontSize = 10.sp, lineHeight = 14.sp,
+                Text(" $it", color = colors.danger, fontSize = 10.sp, lineHeight = 14.sp,
                     modifier = Modifier.padding(top = 4.dp))
             }
             // 解密结果
             r.decrypted?.let { dec ->
                 Spacer(Modifier.height(6.dp))
                 if (dec.success) {
-                    Text("🔓 重发响应解密成功", color = colors.warning, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Text("重发响应解密成功", color = colors.warning, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                     MonoBox(tryBeautify(dec.plaintext!!) ?: dec.plaintext!!,
                         Color(0xFF22C55E).copy(alpha = 0.1f), maxHeight = 280)
                     Row {
@@ -615,7 +615,7 @@ private fun ReplayPanel(
                         }
                     }
                 } else {
-                    Text("⚠️ 解密: ${dec.error}", color = colors.danger, fontSize = 9.sp, lineHeight = 13.sp)
+                    Text(" 解密: ${dec.error}", color = colors.danger, fontSize = 9.sp, lineHeight = 13.sp)
                 }
             }
             // 原始响应体 (可折叠)

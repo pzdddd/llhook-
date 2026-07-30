@@ -89,7 +89,7 @@ fun EndataDecryptScreen(activity: Activity, onClose: () -> Unit) {
             beautified = r.plaintext?.let { tryBeautifyPub(it) }
             decrypting = false
             if (r.success) {
-                Toast.makeText(ctx, "🔓 解密成功", Toast.LENGTH_SHORT).show()
+                Toast.makeText(ctx, " 解密成功", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -133,7 +133,7 @@ fun EndataDecryptScreen(activity: Activity, onClose: () -> Unit) {
                 }
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("🔓 endata 解密器", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Text(" endata 解密器", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                     Text("手动解密 Blued en_data 加密响应",
                         color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
                 }
@@ -285,7 +285,7 @@ fun EndataDecryptScreen(activity: Activity, onClose: () -> Unit) {
                         } else {
                             Icon(Icons.Filled.LockOpen, null, tint = Color.White, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("🔓 解密", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                            Text(" 解密", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }

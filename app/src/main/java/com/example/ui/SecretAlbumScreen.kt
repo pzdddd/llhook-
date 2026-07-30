@@ -150,7 +150,7 @@ fun SecretAlbumScreen(
                 modifier = Modifier.padding(horizontal = 16.dp)
             ) {
                 Text(
-                    if (currentUser == null) "🔒 照片物理隐身，系统图库不可见。点击用户查看"
+                    if (currentUser == null) " 照片物理隐身，系统图库不可见。点击用户查看"
                     else "点击大图预览 · 长按删除 · 销毁将清空并停止入库",
                     color = colors.subText, fontSize = 11.sp,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)

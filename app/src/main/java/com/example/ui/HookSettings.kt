@@ -555,10 +555,10 @@ fun SettingsContent(hostActivity: Activity?, inHost: Boolean, panelMode: Boolean
                         SettingsSwitchItem("闪照免看广告", "闪照次数用尽后, 点「看视频获得一次机会」直接发放奖励, 跳过广告视频", Icons.Outlined.VideoCall,
                             flashAdSkip, { flashAdSkip = it }, textColor, subTextColor)
                         SettingsDivider(glassBorder)
-                        SettingsSwitchItem("附近列表一键聊天", "附近/访客列表项: 距离左移, 右侧加💬按钮直达聊天", Icons.Outlined.Forum,
+                        SettingsSwitchItem("附近列表一键聊天", "附近/访客列表项: 距离左移, 右侧加按钮直达聊天", Icons.Outlined.Forum,
                             nearbyChat, { nearbyChat = it }, textColor, subTextColor)
                         SettingsDivider(glassBorder)
-                        SettingsSwitchItem("附近列表查看私密相册", "聊天按钮下方加🖼按钮, 免进资料页直接查看对方私密相册", Icons.Outlined.PhotoLibrary,
+                        SettingsSwitchItem("附近列表查看私密相册", "聊天按钮下方加按钮, 免进资料页直接查看对方私密相册", Icons.Outlined.PhotoLibrary,
                             nearbyAlbum, { nearbyAlbum = it }, textColor, subTextColor)
                         SettingsDivider(glassBorder)
                         SettingsSwitchItem("首页增加筛选", "附近页排序栏末尾追加筛选按钮 (按角色/VIP/相册/真人等客户端筛选, 抓包不可见), 筛选条件自动持久化", Icons.Outlined.FilterAlt,
@@ -567,7 +567,7 @@ fun SettingsContent(hostActivity: Activity?, inHost: Boolean, panelMode: Boolean
                         SettingsSwitchItem("去除截屏限制", "聊天页禁止截屏时强制允许", Icons.Outlined.Screenshot,
                             screenshot, { screenshot = it }, textColor, subTextColor)
                         SettingsDivider(glassBorder)
-                        SettingsSwitchItem("消息已读防隐身", "即使对方开启隐藏已读, 依然显示", Icons.Outlined.MarkChatRead,
+                        SettingsSwitchItem("消息悄悄查看", "可以使用悄悄查看功能", Icons.Outlined.MarkChatRead,
                             stealthRead, { stealthRead = it }, textColor, subTextColor)
                         SettingsDivider(glassBorder)
                         SettingsSwitchItem("悄悄查看所有消息", "查看消息后对方聊天界面不显示已读 (长按消息页顶部「聊天」Tab 可快捷开关)", Icons.Outlined.Visibility,
