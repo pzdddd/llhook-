@@ -5,14 +5,17 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Color
+import android.graphics.Outline
 import android.graphics.drawable.GradientDrawable
 import android.location.LocationManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -36,7 +39,7 @@ object RealLocationHook : BaseHook {
     data class TrackResult(val success: Boolean, val msg: String, val lat: Double, val lng: Double)
     private val trackCache = ConcurrentHashMap<String, TrackResult>()
 
-    // 用于判断实景雷达是否唤起了官方地图，以便在退出时恢复坐标
+    // 用于判断实景雷达是否唤起了官方地图,以便在退出时恢复坐标
     private var isRealTrackingMapOpened = false
 
     @Volatile private var sniffedLat: Double = 0.0
@@ -48,8 +51,8 @@ object RealLocationHook : BaseHook {
     @Volatile private var myRealLng: Double = 0.0
 
     override fun init(lpparam: XC_LoadPackage.LoadPackageParam) {
-        
-        // 1. 独立抓包嗅探器：偷偷记录系统的真实 URL 坐标
+
+        // 1. 独立抓包嗅探器:偷偷记录系统的真实 URL 坐标
         try {
             val urlHook = object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
@@ -76,17 +79,17 @@ object RealLocationHook : BaseHook {
             val terminalActivityClass = lpparam.classLoader.loadClass("com.blued.android.core.ui.TerminalActivity")
             terminalActivityClass.findMethod { name == "finish" }.hookBefore { param ->
                 if (isRealTrackingMapOpened) {
-                    isRealTrackingMapOpened = false 
+                    isRealTrackingMapOpened = false
                     val activity = param.thisObject as Activity
                     val classLoader = activity.classLoader
-                    
+
                     try {
                         val managerClass = XposedHelpers.findClass("com.soft.blued.ui.find.manager.MapFindManager", classLoader)
-                        val managerInstance = XposedHelpers.callStaticMethod(managerClass, "a") 
+                        val managerInstance = XposedHelpers.callStaticMethod(managerClass, "a")
                         val beanClass = XposedHelpers.findClass("com.soft.blued.ui.find.manager.MapFindManager\$MapFindBean", classLoader)
                         for (f in managerClass.declaredFields) {
                             f.isAccessible = true
-                            if (f.type == beanClass) { f.set(managerInstance, null) } 
+                            if (f.type == beanClass) { f.set(managerInstance, null) }
                             else if (f.type == Boolean::class.java || f.type == Boolean::class.javaPrimitiveType) { f.set(managerInstance, false) }
                         }
                     } catch (e: Throwable) {}
@@ -96,10 +99,14 @@ object RealLocationHook : BaseHook {
                         val observable = XposedHelpers.callStaticMethod(liveEventBusClass, "get", "map_find_click")
                         XposedHelpers.callMethod(observable, "post", false)
                     } catch(e: Throwable){}
-                    
+
                     val token = Config.getAuthToken(activity)
                     val real = getBestRealLocation(activity)
                     if (token.isNotEmpty() && real != null) {
+                        // ① 立即还原本地 UserInfo 缓存坐标, 防止 App 内"我的位置"停留在目标坐标 (乱飘)
+                        //    (服务器坐标在下方异步还原; 本地缓存不同步会导致 App 显示坐标乱飘)
+                        restoreLocalUserInfo(activity, real[0], real[1])
+                        // ② 异步还原服务器坐标 + 清除漫游状态
                         thread {
                             try {
                                 val roamUrl = URL("https://argo.blued.cn/users/roam?llhook_ignore=1")
@@ -123,27 +130,57 @@ object RealLocationHook : BaseHook {
             fragmentClass.findMethod { name == "onResume" }.hookAfter { param ->
                 val fragmentInstance = param.thisObject
                 val activity = XposedHelpers.callMethod(fragmentInstance, "getActivity") as? Activity ?: return@hookAfter
-                
-                // 🛑 核心防御：如果没有开启追踪总开关，或者开启了虚拟定位，本模块装死，全权交给 TrackHook 处理！
+
+                // 🛑 核心防御:如果没有开启追踪总开关,或者开启了虚拟定位,本模块装死,全权交给 TrackHook 处理!
                 if (!Config.isFeatureEnabled("switch_track", activity) || Config.isFeatureEnabled("switch_virtual_location", activity)) {
                     return@hookAfter
                 }
 
-                val rootLayout = activity.findViewById<ViewGroup>(android.R.id.content) ?: return@hookAfter
-                
-                // 清理可能残留的 TrackHook 按钮（防止重叠）
+                // 注入到 fl_all (fragment 根), 和聊天按钮同一容器 (与 TrackHook 绿色按钮一致),
+                // 这样右下角的 bottomMargin 才能正确对齐"聊天按钮上方"
+                val fragView = XposedHelpers.callMethod(fragmentInstance, "getView") as? ViewGroup
+                val flAllId = activity.resources.getIdentifier("fl_all", "id", activity.packageName)
+                val rootLayout = fragView
+                    ?: (if (flAllId != 0) activity.findViewById<ViewGroup>(flAllId) else null)
+                    ?: activity.findViewById<ViewGroup>(android.R.id.content) ?: return@hookAfter
+
+                // 清理可能残留的按钮（防止重叠）
                 rootLayout.findViewWithTag<View>("TrackBtnVirtual")?.let { rootLayout.removeView(it) }
                 rootLayout.findViewWithTag<View>("TrackBtnReal")?.let { rootLayout.removeView(it) }
 
                 var currentTargetUid: String? = null
 
-                // 🚀 自己当家做主：直接注入紫色的“实景雷达追踪”按钮
+                // 🚀 紫色「位置追踪」按钮: 圆形, 右下角聊天按钮上方
+                //   样式与 TrackHook 绿色「追踪」按钮完全一致 (同容器 / 同尺寸 / 同位置),
+                //   仅用紫色 + 文案「位置追踪」区分这是【虚拟定位关闭】时的实景雷达模式。
+                val btnSize = dp(activity, 56f)
                 val trackBtn = TextView(activity).apply {
                     tag = "TrackBtnReal"
                     text = "位置追踪"
-                    textSize = 12f; setTextColor(Color.WHITE); gravity = Gravity.CENTER; setPadding(50, 20, 50, 20)
-                    background = GradientDrawable().apply { setColor(Color.parseColor("#9C27B0")); cornerRadius = 50f; setStroke(2, Color.WHITE) }
-                    layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.TOP or Gravity.END; topMargin = 320; marginEnd = 40 }
+                    textSize = 11f
+                    setTextColor(Color.WHITE)
+                    gravity = Gravity.CENTER
+                    maxLines = 2          // 「位置 / 追踪」两行, 在 56dp 圆形内居中显示
+                    setPadding(0, dp(activity, 6f), 0, dp(activity, 6f))
+                    // 圆形紫色背景 (OVAL + ViewOutlineProvider 强制裁圆, 同 TrackHook)
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.OVAL
+                        setColor(Color.parseColor("#9C27B0"))
+                        setStroke(dp(activity, 2f), Color.WHITE)
+                    }
+                    outlineProvider = object : ViewOutlineProvider() {
+                        override fun getOutline(view: View, outline: Outline) {
+                            outline.setOval(0, 0, view.width, view.height)
+                        }
+                    }
+                    clipToOutline = true
+                    elevation = dp(activity, 8f).toFloat()
+                    // 右下角, 聊天按钮上方 (聊天按钮 bottomMargin=90, 56dp 高, 间距16 → 162)
+                    layoutParams = FrameLayout.LayoutParams(btnSize, btnSize).apply {
+                        gravity = Gravity.BOTTOM or Gravity.END
+                        rightMargin = dp(activity, 18f)
+                        bottomMargin = dp(activity, 162f)
+                    }
 
                     // 短按获取坐标
                     setOnClickListener {
@@ -173,7 +210,7 @@ object RealLocationHook : BaseHook {
                                     try {
                                         val token = Config.getAuthToken(activity)
                                         if (token.isNotEmpty()) updateLocation(token, finalLat, finalLng)
-                                        
+
                                         mainHandler.post {
                                             Toast.makeText(activity, "定位成功", Toast.LENGTH_SHORT).show()
                                             if (MapHelper.openOfficialMapFind(activity, finalLat, finalLng, "目标位置")) {
@@ -186,7 +223,7 @@ object RealLocationHook : BaseHook {
                                 }
                             } else Toast.makeText(activity, "请稍等", Toast.LENGTH_SHORT).show()
                         }
-                        true 
+                        true
                     }
                 }
                 rootLayout.addView(trackBtn)
@@ -204,10 +241,10 @@ object RealLocationHook : BaseHook {
                     val token = Config.getAuthToken(activity)
                     if (token.isEmpty() || trackCache.containsKey(uidFound)) return@thread
 
-                    // 🌍 实景模式获取坐标：系统抓包 + 底层 Android 系统兜底
+                    // 🌍 实景模式获取坐标:系统抓包 + 底层 Android 系统兜底
                     var realLat = sniffedLat
                     var realLng = sniffedLng
-                    
+
                     if (realLat == 0.0 || realLng == 0.0) {
                         try {
                             val lm = activity.getSystemService(Context.LOCATION_SERVICE) as LocationManager
@@ -219,11 +256,11 @@ object RealLocationHook : BaseHook {
                     }
 
                     if (realLat == 0.0 || realLng == 0.0) {
-                        trackCache[uidFound] = TrackResult(false, "获取定位失败，请刷新后重试", 0.0, 0.0)
+                        trackCache[uidFound] = TrackResult(false, "获取定位失败,请刷新后重试", 0.0, 0.0)
                         return@thread
                     }
 
-                    // 记录真实坐标，退出官方地图时还原，防止坐标飘走
+                    // 记录真实坐标,退出官方地图时还原,防止坐标飘走
                     myRealLat = realLat
                     myRealLng = realLng
 
@@ -234,18 +271,29 @@ object RealLocationHook : BaseHook {
                     try {
                         trackCache[uidFound] = doTrilaterationTracking(uidFound, token, realLat, realLng, initialDist)
                     } catch (e: Throwable) {} finally {
+                        // 解算期间 fetchDynamicDistance 会把服务器坐标挪到各探测点;
+                        // 结束后一并还原 服务器坐标 + 本地 UserInfo 缓存, 防止"我的位置"乱飘
                         updateLocation(token, realLat, realLng)
+                        restoreLocalUserInfo(activity, realLat, realLng)
                     }
                 }
             }
 
             fragmentClass.findMethod { name == "onPause" }.hookBefore { param ->
                 val activity = XposedHelpers.callMethod(param.thisObject, "getActivity") as? Activity ?: return@hookBefore
-                val rootLayout = activity.findViewById<ViewGroup>(android.R.id.content)
+                // 与注入时同一容器 (fragment 根 fl_all 优先), 才能准确移除按钮
+                val fragView = XposedHelpers.callMethod(param.thisObject, "getView") as? ViewGroup
+                val flAllId = activity.resources.getIdentifier("fl_all", "id", activity.packageName)
+                val rootLayout = fragView
+                    ?: (if (flAllId != 0) activity.findViewById<ViewGroup>(flAllId) else null)
+                    ?: activity.findViewById<ViewGroup>(android.R.id.content)
                 rootLayout?.findViewWithTag<View>("TrackBtnReal")?.let { rootLayout.removeView(it) }
             }
         } catch (e: Exception) {}
     }
+
+    private fun dp(ctx: Context, dp: Float): Int =
+        TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, dp, ctx.resources.displayMetrics).toInt()
 
     private fun extractUid(fragmentInstance: Any): String? {
         try {
@@ -269,11 +317,23 @@ object RealLocationHook : BaseHook {
             conn.setRequestProperty("authorization", token)
             conn.setRequestProperty("user-agent", "Mozilla/5.0 (Linux; U; Android 13; ...) app/1")
             conn.connectTimeout = 3000
-            conn.inputStream.bufferedReader().use { it.readText() } 
+            conn.inputStream.bufferedReader().use { it.readText() }
         } catch (e: Exception) {}
     }
 
-    /** 取最可靠的「真实坐标」用于退出地图时还原：优先追踪时记录的值，否则现取系统 GPS。 */
+    /** 还原本地 UserInfo 缓存的经纬度, 防止 App 内"我的位置"停留在探测点/目标坐标 (乱飘)。 */
+    private fun restoreLocalUserInfo(activity: Activity, lat: Double, lng: Double) {
+        try {
+            val userInfoClass = XposedHelpers.findClassIfExists("com.blued.android.module.common.user.model.UserInfo", activity.classLoader)
+            if (userInfoClass != null) {
+                val loginUser = XposedHelpers.callMethod(XposedHelpers.callStaticMethod(userInfoClass, "getInstance"), "getLoginUserInfo")
+                XposedHelpers.setObjectField(loginUser, "lat", lat.toString())
+                XposedHelpers.setObjectField(loginUser, "lon", lng.toString())
+            }
+        } catch(e: Throwable){}
+    }
+
+    /** 取最可靠的「真实坐标」用于退出地图时还原:优先追踪时记录的值,否则现取系统 GPS。 */
     private fun getBestRealLocation(activity: Activity): DoubleArray? {
         if (myRealLat != 0.0 && myRealLng != 0.0) return doubleArrayOf(myRealLat, myRealLng)
         return try {
@@ -288,7 +348,7 @@ object RealLocationHook : BaseHook {
     private fun fetchDynamicDistance(uid: String, myToken: String, lat: Double, lng: Double): Double {
         try {
             updateLocation(myToken, lat, lng)
-            Thread.sleep(200) 
+            Thread.sleep(200)
             val conn = URL("https://argo.blued.cn/users/$uid/basic?llhook_ignore=1").openConnection() as HttpURLConnection
             conn.setRequestProperty("authorization", myToken)
             if (conn.responseCode == 200) {
@@ -296,16 +356,16 @@ object RealLocationHook : BaseHook {
                 if (dataArray != null && dataArray.length() > 0) return dataArray.getJSONObject(0).optDouble("distance", -1.0)
             }
         } catch (t: Throwable) {}
-        return -1.0 
+        return -1.0
     }
 
-    // 📐 实景物理坐标专用算法：双圆几何相交 (Trilateration)
+    // 📐 实景物理坐标专用算法:双圆几何相交 (Trilateration)
     private fun doTrilaterationTracking(uid: String, token: String, startLat: Double, startLng: Double, initialDist: Double): TrackResult {
-        if (initialDist < 0.01) return TrackResult(true, "解算完成！目标就在你脚下！\n📍 $startLat, $startLng", startLat, startLng)
+        if (initialDist < 0.01) return TrackResult(true, "解算完成!目标就在你脚下!\n📍 $startLat, $startLng", startLat, startLng)
 
         val probeLat = startLat
         val probeLng = startLng + (initialDist / (111.32 * cos(Math.toRadians(startLat))))
-        
+
         val r2 = fetchDynamicDistance(uid, token, probeLat, probeLng)
         if (r2 < 0) return TrackResult(false, "定位失败", 0.0, 0.0)
 
@@ -313,7 +373,7 @@ object RealLocationHook : BaseHook {
         val d = initialDist
         val a = (r1 * r1 - r2 * r2 + d * d) / (2 * d)
         val hSq = r1 * r1 - a * a
-        
+
         if (hSq < 0) return TrackResult(false, "定位失败", 0.0, 0.0)
         val h = sqrt(hSq)
 
@@ -327,16 +387,16 @@ object RealLocationHook : BaseHook {
         val i2Lng = midLng
 
         val distI1 = fetchDynamicDistance(uid, token, i1Lat, i1Lng)
-        
+
         val finalLat: Double
         val finalLng: Double
-        if (distI1 in 0.0..0.05) { 
+        if (distI1 in 0.0..0.05) {
             finalLat = i1Lat; finalLng = i1Lng
         } else {
             finalLat = i2Lat; finalLng = i2Lng
         }
 
-        return TrackResult(true, "定位完成！\n\n📍 纬度: $finalLat\n📍 经度: $finalLng\n", finalLat, finalLng)
+        return TrackResult(true, "定位完成!\n\n📍 纬度: $finalLat\n📍 经度: $finalLng\n", finalLat, finalLng)
     }
 
     private fun showResult(activity: Activity, success: Boolean, msg: String, lat: Double = 0.0, lng: Double = 0.0) {

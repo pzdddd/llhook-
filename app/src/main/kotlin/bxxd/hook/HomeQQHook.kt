@@ -13,6 +13,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.Outline
 import android.animation.ValueAnimator
+import android.location.LocationManager
 import android.os.Handler
 import android.os.Looper
 import android.util.TypedValue
@@ -88,6 +89,9 @@ object HomeQQHook : BaseHook {
     private var touchSlop = 16     // 判定拖拽的最小距离 (运行时按 density 校准)
     private var edgeArmed = false  // 边缘已接管手势序列(拦截DOWN后全程拦截, 不漏给子View)
 
+    // 左上角坐标显示去重键 (避免首页反复 onResume 重复逆地理请求; 新建坐标控件时在 injectQQAvatar 重置)
+    @Volatile private var lastDedupKey: String? = null
+
     override fun init(lpparam: XC_LoadPackage.LoadPackageParam) {
         try {
             val homeActivityClass = lpparam.classLoader.loadClass("com.soft.blued.ui.home.HomeActivity")
@@ -158,6 +162,22 @@ object HomeQQHook : BaseHook {
                             edgeArmed = false
                         }
                     } catch (e: Throwable) { XposedBridge.log("llhook qq onDestroy err: $e") }
+                }
+            })
+
+            // ③ter HomeActivity.onResume — 刷新左上角坐标/地名
+            //   场景: 用户在设置面板里开关「虚拟定位」后返回首页, 坐标应立刻跟随更新
+            //   (否则关闭虚拟定位后, 左上角仍显示之前配置的虚拟坐标, 如北京)
+            XposedBridge.hookAllMethods(homeActivityClass, "onResume", object : de.robv.android.xposed.XC_MethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    try {
+                        val activity = param.thisObject as? Activity ?: return
+                        if (!Config.isFeatureEnabled("switch_qq_home", activity)) return
+                        if (!Config.isFeatureEnabled("switch_qq_coord", activity)) return
+                        val rootView = activity.findViewById<ViewGroup>(android.R.id.content) ?: return
+                        val textBlock = rootView.findViewWithTag<LinearLayout>(TAG_LOCATION_INFO) ?: return
+                        loadLocationInfoAsync(activity, textBlock)
+                    } catch (e: Throwable) {}
                 }
             })
 
@@ -331,6 +351,8 @@ object HomeQQHook : BaseHook {
         // —— 坐标显示受 switch_qq_coord 控制; 点击坐标跳转虚拟定位地图选点 ——
         if (Config.isFeatureEnabled("switch_qq_coord", activity)) {
             headerRow.addView(textBlock)
+            // 新建坐标控件: 重置去重缓存, 确保本次首次加载一定执行 (HomeQQHook 是单例, 旧值跨实例残留会导致不刷新)
+            lastDedupKey = null
             loadLocationInfoAsync(activity, textBlock)
             textBlock.setOnClickListener {
                 try {
@@ -371,15 +393,63 @@ object HomeQQHook : BaseHook {
     private fun loadLocationInfoAsync(activity: Activity, textBlock: LinearLayout) {
         Thread {
             try {
-                val lat = Config.getCustomLat(activity)
-                val lng = Config.getCustomLng(activity)
-                val coordStr = "📍 " +
+                // ★ 根据虚拟定位开关决定左上角显示的坐标源:
+                //   开启 → 配置的虚拟定位坐标 (Config.getCustomLat/Lng, 即地图选点)  前缀 🎭
+                //   关闭 → 设备真实 GPS 坐标 (LocationManager.getLastKnownLocation)   前缀 📍
+                //   修复: 之前无视开关恒读 Config 坐标, 导致关闭虚拟定位后左上角仍显示虚拟坐标 (如北京)。
+                //   安全前提: VirtualLocationHook 内每个回调都先判断 switch_virtual_location,
+                //            开关关闭时不拦截, 故 getLastKnownLocation 拿到的是真实坐标。
+                val virtOn = Config.isFeatureEnabled("switch_virtual_location", activity)
+                val real = if (virtOn) null else getDeviceLocation(activity)
+
+                val lat: Double
+                val lng: Double
+                val prefix: String
+                val noFix: Boolean   // 真实定位获取失败 (仅虚拟定位关闭且无 GPS 时为 true)
+                when {
+                    virtOn -> {
+                        lat = Config.getCustomLat(activity)
+                        lng = Config.getCustomLng(activity)
+                        prefix = "🎭"; noFix = false
+                    }
+                    real != null -> {
+                        lat = real[0]; lng = real[1]
+                        prefix = "📍"; noFix = false
+                    }
+                    else -> {
+                        // 拿不到真实定位 (未授权/无缓存定位): 用 NaN 占位, 仅显示提示,
+                        // 不把配置坐标(如北京)当作"真实位置"展示, 避免误导。
+                        lat = Double.NaN; lng = Double.NaN
+                        prefix = "📍"; noFix = true
+                    }
+                }
+
+                // 去重: 内容一致则跳过, 避免首页反复 onResume 重复逆地理请求
+                // (noFix 用独立键; 开关切换 / 坐标变化 / Activity 重建后首次加载都会让键失效从而重新拉取)
+                val dedupKey = if (noFix) "nofix" else "$virtOn,$lat,$lng"
+                if (lastDedupKey == dedupKey) return@Thread
+                lastDedupKey = dedupKey
+
+                if (noFix) {
+                    mainHandler.post {
+                        try {
+                            if (!activity.isFinishing) {
+                                (textBlock.findViewWithTag<View>(TAG_COORD) as? TextView)?.text = "📍 定位获取中…"
+                                (textBlock.findViewWithTag<View>(TAG_NAME) as? TextView)?.text = "请开启定位权限 / 打开 GPS"
+                            }
+                        } catch (e: Throwable) {}
+                    }
+                    return@Thread
+                }
+
+                val coordStr = "$prefix " +
                     String.format(java.util.Locale.US, "%.4f", lat) + ", " +
                     String.format(java.util.Locale.US, "%.4f", lng)
                 mainHandler.post {
                     try {
                         if (!activity.isFinishing) {
                             (textBlock.findViewWithTag<View>(TAG_COORD) as? TextView)?.text = coordStr
+                            (textBlock.findViewWithTag<View>(TAG_NAME) as? TextView)?.text = "正在解析位置…"
                         }
                     } catch (e: Throwable) {}
                 }
@@ -394,6 +464,17 @@ object HomeQQHook : BaseHook {
                 }
             } catch (e: Throwable) {}
         }.start()
+    }
+
+    /** 取设备真实 GPS 定位 (虚拟定位关闭时用)。依次尝试 GPS / NETWORK / PASSIVE provider 的最近一次定位。 */
+    private fun getDeviceLocation(activity: Activity): DoubleArray? {
+        return try {
+            val lm = activity.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return null
+            val loc = try { lm.getLastKnownLocation(LocationManager.GPS_PROVIDER) } catch (e: Throwable) { null }
+                ?: try { lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER) } catch (e: Throwable) { null }
+                ?: try { lm.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER) } catch (e: Throwable) { null }
+            if (loc != null) doubleArrayOf(loc.latitude, loc.longitude) else null
+        } catch (e: Throwable) { null }
     }
 
     /** 高德逆地理编码: 坐标 → 真实地名 (formatted_address)。无 API Key 时给出提示。 */

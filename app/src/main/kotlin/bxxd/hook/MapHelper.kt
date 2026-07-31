@@ -262,14 +262,24 @@ object MapHelper {
                 text = "📍 ${formatLat(lat)}, ${formatLng(lng)}\n名称获取中..."
                 setTextColor(android.graphics.Color.WHITE)
                 textSize = 12f
+                maxLines = 2
+                maxWidth = dp2px(activity, 260f)   // 限宽: 长地址不横跨全屏, 居中时不碰到两侧按钮
                 setPadding(dp2px(activity, 12f), dp2px(activity, 8f), dp2px(activity, 12f), dp2px(activity, 8f))
                 background = android.graphics.drawable.GradientDrawable().apply {
                     setColor(android.graphics.Color.parseColor("#CC000000")); cornerRadius = dp2px(activity, 12f).toFloat()
+                    setStroke(dp2px(activity, 1f), android.graphics.Color.parseColor("#59FFFFFF"))
                 }
+                // elevation 让叠层浮在地图/顶部工具栏之上, 不被遮挡
+                elevation = dp2px(activity, 8f).toFloat()
                 layoutParams = android.widget.FrameLayout.LayoutParams(
                     android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
                     android.widget.FrameLayout.LayoutParams.WRAP_CONTENT
-                ).apply { gravity = android.view.Gravity.TOP or android.view.Gravity.START; topMargin = dp2px(activity, 50f); marginStart = dp2px(activity, 12f) }
+                ).apply {
+                    // 顶部水平居中: 避开左上角返回按钮和右侧菜单;
+                    // topMargin = 状态栏 + 标准工具栏(56dp), 保证叠层在工具栏【下方】而非被其覆盖
+                    gravity = android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL
+                    topMargin = getStatusBarHeight(activity) + dp2px(activity, 56f)
+                }
             }
             rootView.addView(tv)
             // 逆地理名称
@@ -355,4 +365,10 @@ object MapHelper {
     }
 
     private fun dp2px(context: Context, dp: Float): Int = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, dp, context.resources.displayMetrics).toInt()
+
+    /** 状态栏高度 (px)。官方地图叠层用它避让顶部状态栏。 */
+    private fun getStatusBarHeight(activity: Activity): Int {
+        val id = activity.resources.getIdentifier("status_bar_height", "dimen", "android")
+        return if (id > 0) activity.resources.getDimensionPixelSize(id) else dp2px(activity, 24f)
+    }
 }

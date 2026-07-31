@@ -51,11 +51,12 @@ import androidx.savedstate.setViewTreeSavedStateRegistryOwner
  */
 fun showHostComposePanel(
     activity: Activity,
+    dim: Boolean = true,
     onError: (Throwable) -> Unit = { e ->
         Toast.makeText(activity, "界面加载失败: ${e.message}", Toast.LENGTH_SHORT).show()
     },
     content: @Composable (onClose: () -> Unit) -> Unit
-) = showHostDialog(activity, fullScreen = false, rounded = true, onError = onError, content = content)
+) = showHostDialog(activity, fullScreen = false, rounded = true, dim = dim, onError = onError, content = content)
 
 fun showHostComposeScreen(
     activity: Activity,
@@ -63,7 +64,7 @@ fun showHostComposeScreen(
         Toast.makeText(activity, "界面加载失败: ${e.message}", Toast.LENGTH_SHORT).show()
     },
     content: @Composable (onClose: () -> Unit) -> Unit
-) = showHostDialog(activity, fullScreen = true, rounded = false, onError = onError, content = content)
+) = showHostDialog(activity, fullScreen = true, rounded = false, dim = true, onError = onError, content = content)
 
 /**
  * 内部统一实现: [fullScreen] = true 全屏 / false 居中浮窗。
@@ -76,6 +77,7 @@ private fun showHostDialog(
     activity: Activity,
     fullScreen: Boolean,
     rounded: Boolean,
+    dim: Boolean,
     onError: (Throwable) -> Unit,
     content: @Composable (onClose: () -> Unit) -> Unit
 ) {
@@ -121,13 +123,13 @@ private fun showHostDialog(
                 setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT)
                 setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             } else {
-                // 浮窗: 居中, 92%×88%, 透明背景 + 0.5 遮罩 (四周能看到宿主界面)
+                // 浮窗: 居中, 92%×88%, 透明背景 + 可选遮罩 (dim=false 时完全透明, 四周直出宿主界面)
                 val dm = activity.resources.displayMetrics
                 val w = (dm.widthPixels * 0.92f).toInt()
                 val h = (dm.heightPixels * 0.88f).toInt()
                 setLayout(w, h)
                 setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-                setDimAmount(0.5f)
+                setDimAmount(if (dim) 0.5f else 0f)
             }
         }
 

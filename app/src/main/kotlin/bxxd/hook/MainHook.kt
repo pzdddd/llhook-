@@ -183,6 +183,7 @@ class MainHook : IXposedHookLoadPackage {
             RealLocationHook.init(lpparam) //关闭虚拟定位位置追踪
             Ban2Hook.init(lpparam)        // 防删聊天与风险提示拦截
             NetworkSpoofHook.init(lpparam) // 极速版网络请求头伪装
+            HostRewriteHook.init(lpparam)     // 请求 host 改写: social.irisgw.cn → social.blued.cn
             NearbyRoleHook.init(lpparam)   // 附近列表角色 UI 注入 (显示数据)
             NearbySortHook.init(lpparam)   // 附近排序栏: 右移+加粗+筛选按钮 (客户端筛选 角色/VIP/相册/真人)
             NearbyChatHook.init(lpparam)   // 附近列表一键聊天: 距离左移 + 右侧💬按钮直达聊天

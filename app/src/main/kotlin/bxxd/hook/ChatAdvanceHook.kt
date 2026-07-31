@@ -266,7 +266,7 @@ object ChatAdvanceHook : BaseHook {
             secretTabsAttached.add(tab)
             tab.setOnLongClickListener {
                 try {
-                    com.example.ui.showHostComposePanel(activity) { onClose ->
+                    com.example.ui.showHostComposePanel(activity, dim = false) { onClose ->
                         com.example.ui.theme.MyApplicationTheme {
                             com.example.ui.SecretViewAllPanel(onClose)
                         }

@@ -295,6 +295,7 @@ fun SettingsContent(hostActivity: Activity?, inHost: Boolean, panelMode: Boolean
                         var switchLite by rememberConfigBoolean("switch_lite")
                         var riskBlock by rememberConfigBoolean("switch_risk_user_block")
                         var spoofLite by rememberConfigBoolean(bxxd.hook.NetworkSpoofHook.KEY_ENABLED)
+                        var rewriteHost by rememberConfigBoolean(bxxd.hook.HostRewriteHook.KEY_ENABLED)
 
                         SettingsSwitchItem("一键 lite (减负提速)", "精简不必要的功能和服务", Icons.Outlined.Speed,
                             switchLite, { switchLite = it }, textColor, subTextColor)
@@ -305,6 +306,11 @@ fun SettingsContent(hostActivity: Activity?, inHost: Boolean, panelMode: Boolean
                         SettingsSwitchItem("属性透视", "联网查详情接口为附近/在线列表补全真实 role (不影响 IP/访客/闪照)",
                             Icons.Outlined.Visibility,
                             spoofLite, { spoofLite = it }, textColor, subTextColor
+                        )
+                        SettingsDivider(glassBorder)
+                        SettingsSwitchItem("请求 host 改写", "把所有 social.irisgw.cn 请求改写为 social.blued.cn (走旧版明文接口)",
+                            Icons.Outlined.SwapHoriz,
+                            rewriteHost, { rewriteHost = it }, textColor, subTextColor
                         )
                     }
                 }

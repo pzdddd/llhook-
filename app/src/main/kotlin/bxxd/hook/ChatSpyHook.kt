@@ -446,7 +446,7 @@ object ChatSpyHook : BaseHook {
     private fun fetchAndShowInfo(activity: Activity, uid: String, token: String, classLoader: ClassLoader) {
         try {
             val basicJsonArgo = doHttpGet("https://argo.blued.cn/users/$uid/basic", token)?.optJSONArray("data")?.optJSONObject(0) ?: JSONObject()
-            val fullJsonSocial = doHttpGet("https://social.blued.cn/users/$uid?from=&is_living=false&is_live_flow=1&is_vip_page=0&is_shadow=0&is_call=0", token)?.optJSONArray("data")?.optJSONObject(0) ?: JSONObject()
+            val fullJsonSocial = doHttpGet("https://social.blued.cn/users/$uid", token)?.optJSONArray("data")?.optJSONObject(0) ?: JSONObject()
             val data = JSONObject()
             fullJsonSocial.keys().forEach { data.put(it, fullJsonSocial.get(it)) }
             basicJsonArgo.keys().forEach { data.put(it, basicJsonArgo.get(it)) }
